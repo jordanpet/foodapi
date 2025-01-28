@@ -105,6 +105,114 @@ function saveImage(imageFile, savePath) {
     })
 }
 
+function getProductDetail(res, product_id) {
+    // First Query: Get Product Details
+    const productDetailsQuery = `
+        SELECT 
+            pd.product_id, 
+            pd.category_id, 
+            pd.brand_id, 
+            pd.type_id, 
+            pd.name, 
+            pd.details, 
+            pd.unit_name, 
+            pd.unit_value, 
+            pd.price, 
+            pd.status, 
+            pd.created_date, 
+            pd.updated_date, 
+            cd.category_name, 
+            IFNULL(bd.brand_name, '') AS brand_name, 
+            td.type_name
+        FROM 
+            product_details AS pd
+        INNER JOIN 
+            category_details AS cd 
+            ON pd.category_id = cd.category_id
+        LEFT JOIN 
+            brand_detail AS bd 
+            ON pd.brand_id = bd.brand_id
+        INNER JOIN 
+            type_details AS td 
+            ON pd.type_id = td.type_id
+        WHERE 
+            pd.status = ? 
+            AND pd.product_id = ?;
+    `;
+
+    // Second Query: Get Nutrition Details
+    const nutritionDetailsQuery = `
+        SELECT 
+            nutrition_id, 
+            product_id, 
+            nutrition_name, 
+            nutrition_value, 
+            nutrition_weight, 
+            nutrition_date, 
+            status, 
+            created_date, 
+            updated_date
+        FROM 
+            nutrition_details 
+        WHERE 
+            product_id = ? 
+            AND status = ?
+        ORDER BY 
+            nutrition_name;
+    `;
+
+    // Third Query: Get Image Details
+    const imageDetailsQuery = `
+        SELECT 
+            image_id, 
+            product_id, 
+            image 
+        FROM 
+            image_detail 
+        WHERE 
+            product_id = ? 
+            AND status = ?;
+    `;
+
+    // Execute queries sequentially
+    db.query(productDetailsQuery, ["1", product_id], (err, productResult) => {
+        if (err) {
+            helper.throwHtmlError(err, res);
+            return;
+        }
+
+        if (productResult.length === 0) {
+            return res.json({ status: "0", message: "Invalid item" });
+        }
+
+        // Product details found, proceed to get nutrition details
+        db.query(nutritionDetailsQuery, [product_id, "1"], (err, nutritionResult) => {
+            if (err) {
+                helper.throwHtmlError(err, res);
+                return;
+            }
+
+            // Proceed to get image details
+            db.query(imageDetailsQuery, [product_id, "1"], (err, imageResult) => {
+                if (err) {
+                    helper.throwHtmlError(err, res);
+                    return;
+                }
+
+                // Combine all results into a single response
+                const responsePayload = {
+                    ...productResult[0],
+                    nutrition_list: nutritionResult,
+                    images: imageResult,
+                };
+
+                res.json({ status: "1", payload: responsePayload, message: "Success" });
+            });
+        });
+    });
+}
+
+
 // //END-POINT
 module.exports.controllers = (app, io, user_socket_connect_list) => {
     // Brand  end point
@@ -579,7 +687,7 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
             );
         }, "1");
     });
-
+    // product end point
     app.post('/api/admin/product_add', (req, res) => {
         var form = new multiparty.Form();
         checkAccessToken(req.headers, res, (userObj) => {
@@ -602,7 +710,7 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
 
                             files.image.forEach(imageFile => {
                                 var extension = imageFile.originalFilename.substring(files.image[0].originalFilename.lastIndexOf(".") + 1)
-                                var imageFileName = helper.fileNameGenerate(extension);
+                                var imageFileName = "product/" + helper.fileNameGenerate(extension);
 
                                 imageNamePathArr.push(imageFileName);
                                 fullImageNamePathArr.push(helper.ImagePath() + imageFileName);
@@ -698,48 +806,18 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
 
         checkAccessToken(req.headers, res, (userObj) => {
             helper.checkParameterValid(res, reqObj, ["product_id", "category_id", "brand_id", "type_id",
-                "name", "details", "unit_name", "unit_value", "nutrition_weight", "nutrition_date", "price"],
-                () => {
-
+                "name", "details", "unit_name", "price"], () => {
                     db.query(
-                        ` UPDATE product_details 
-                    SET category_id = ?, brand_id = ?, type_id = ?, name = ?, 
-                        details = ?, unit_name = ?, unit_value = ?, price = ?, status = ?, created_date = ?, updated_date = NOW() 
-                     WHERE product_id = ? AND status = ?`,
-                        [reqObj.category_id, reqObj.brand_id, reqObj.type_id, reqObj.name,
-                        reqObj.details, reqObj.unit_name, reqObj.unit_value, reqObj.price, reqObj.product_id, "1"],
-                        (err, result) => {
-                            if (err) {
-                                // Log and handle database errors
-                                helper.throwHtmlError(err, res);
-                                return;
-                            }
-                            if (result.affectedRows > 0) {
-                                res.json({ status: "1", message: messages.brandupdate });
-                            } else {
-                                res.json({ status: "0", message: messages.fail });
-                            }
-                        }
-                    );
-
-                });
-        }, "1");
-    });
-
-    app.post('/api/admin/product_delete', (req, res) => {
-        helper.dlog(req.body);
-        var reqObj = req.body;
-
-        checkAccessToken(req.headers, res, (userObj) => {
-            helper.checkParameterValid(res, reqObj, ["product_id",],
-                () => {
-
-                    db.query(
-                        ` UPDATE product_details 
-                    SET status = ?, updated_date = NOW() 
-                     WHERE product_id = ? AND status = ?`,
-                        ["2", reqObj.product_id, "1"],
-                        (err, result) => {
+                        `UPDATE product_details 
+                        SET category_id = ?, brand_id = ?, type_id = ?, name = ?, 
+                            details = ?, unit_name = ?, unit_value = ?, price = ?, 
+                            updated_date = NOW() 
+                        WHERE product_id = ? AND status = ?`,
+                        [
+                            reqObj.category_id, reqObj.brand_id, reqObj.type_id, reqObj.name,
+                            reqObj.details, reqObj.unit_name, reqObj.unit_value, reqObj.price,
+                            reqObj.product_id, "1"
+                        ], (err, result) => {
                             if (err) {
                                 // Log and handle database errors
                                 helper.throwHtmlError(err, res);
@@ -757,6 +835,77 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
         }, "1");
     });
 
+    app.post('/api/admin/product_delete', (req, res) => {
+        helper.dlog(req.body);
+        var reqObj = req.body;
+
+        checkAccessToken(req.headers, res, (userObj) => {
+            helper.checkParameterValid(res, reqObj, ["product_id"],
+                () => {
+
+                    db.query(
+                        ` UPDATE product_details 
+                    SET status = ?, updated_date = NOW() 
+                     WHERE product_id = ? AND status = ?`,
+                        ["2", reqObj.product_id, "1"],
+                        (err, result) => {
+                            if (err) {
+                                // Log and handle database errors
+                                helper.throwHtmlError(err, res);
+                                return;
+                            }
+                            if (result.affectedRows > 0) {
+                                res.json({ status: "1", message: messages.productDelete });
+                            } else {
+                                res.json({ status: "0", message: messages.fail });
+                            }
+                        }
+                    );
+
+                });
+        }, "1");
+    });
+    app.post('/api/admin/product_list', (req, res) => {
+        helper.dlog(req.body);
+        var reqObj = req.body;
+
+        checkAccessToken(req.headers, res, (userObj) => {
+
+            db.query(`SELECT 
+                pd.product_id, pd.category_id, pd.brand_id, pd.type_id, pd.name, 
+                pd.details, pd.unit_name, pd.unit_value, pd.price, pd.status, 
+                pd.created_date, pd.updated_date, cd.category_name, 
+                IFNULL(bd.brand_name, "") AS brand_name, td.type_name 
+            FROM product_details AS pd 
+            INNER JOIN category_details AS cd ON pd.category_id = cd.category_id 
+            LEFT JOIN brand_detail AS bd ON pd.brand_id = bd.brand_id 
+            INNER JOIN type_details AS td ON pd.type_id = td.type_id 
+            WHERE pd.status = ? 
+            ORDER BY pd.product_id DESC`,
+                ["1"], (err, result) => {
+                    if (err) {
+                        helper.throwHtmlError(err, res);
+                        return;
+                    }
+                    res.json({ status: "1", payload: result, message: messages.success });
+                }
+            );
+        }, "1");
+    });
+
+    app.post('/api/admin/product_detail', (req, res) => {
+        helper.dlog(req.body);
+        var reqObj = req.body;
+
+        checkAccessToken(req.headers, res, (userObj) => {
+            helper.checkParameterValid(res, reqObj,["product_id"], () => {
+
+                getProductDetail(res, reqObj.product_id)
+            })
+        }, "1");
+    });
+
+    // /product nutrition end point
     app.post('/api/admin/product_nutrition_add', (req, res) => {
         helper.dlog(req.body);
         const reqObj = req.body;
@@ -768,10 +917,11 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
                 "nutrition_weight", "nutrition_date"], () => {
                     // Check if the brand already exists
                     db.query(
-                        `SELECT COUNT(*) as count FROM nutrition_details WHERE product_id, nutrition_name, 
-                    nutrition_value, nutrition_weight, nutrition_date = ? LIMIT 1`,
-                        [reqObj.product_id, reqObj.nutrition_name, reqObj.nutrition_value,
-                        reqObj.nutrition_weight, reqObj.nutrition_date],
+                        `SELECT COUNT(*) as count FROM nutrition_details 
+                        WHERE product_id = ? AND nutrition_name = ? AND nutrition_value = ? AND nutrition_weight = ? 
+                        AND nutrition_date = ? LIMIT 1`,
+                        [reqObj.product_id, reqObj.nutrition_name, reqObj.nutrition_value, reqObj.nutrition_weight,
+                        reqObj.nutrition_date],
                         (err, result) => {
                             if (err) {
                                 // Handle database error
@@ -791,7 +941,7 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
                             nutrition_value, nutrition_weight, nutrition_date, status, created_date,
                              updated_date) VALUES (?,?,?,?,?,?, NOW(), NOW())`,
                                 [reqObj.product_id, reqObj.nutrition_name, reqObj.nutrition_value,
-                                reqObj.nutrition_weight, reqObj.nutrition_date],
+                                reqObj.nutrition_weight, reqObj.nutrition_date, "1"],
                                 (err, result) => {
                                     if (err) {
                                         // Handle database error
@@ -823,9 +973,9 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
                         ` UPDATE nutrition_details 
                     SET nutrition_name = ?, nutrition_value = ?, nutrition_weight = ?, 
                     nutrition_date = ?, updated_date = NOW() 
-                     WHERE product_id = ? AND nutrition_id = ? AND status = ?`,
-                        [reqObj.nutrition_id, reqObj.product_id, reqObj.nutrition_name, reqObj.nutrition_value,
-                        reqObj.nutrition_weight, reqObj.nutrition_date, "1"],
+                     WHERE nutrition_id = ? AND product_id = ? AND status = ?`,
+                        [reqObj.nutrition_name, reqObj.nutrition_value, reqObj.nutrition_weight,
+                        reqObj.nutrition_date, reqObj.nutrition_id, reqObj.product_id, "1"],
                         (err, result) => {
                             if (err) {
                                 // Log and handle database errors
@@ -852,9 +1002,9 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
             helper.checkParameterValid(res, reqObj, ["nutrition_id", "product_id"],
                 () => {
                     db.query(
-                        ` UPDATE nutrition_details 
-                        SET status = ?, updated_date = NOW() 
-                         WHERE nutrition_id = ? AND status = ?`,
+                        `UPDATE nutrition_details 
+                         SET status = ?, updated_date = NOW() 
+                         WHERE nutrition_id = ? AND product_id = ? AND status = ?`,
                         ["2", reqObj.nutrition_id, reqObj.product_id, "1"],
                         (err, result) => {
                             if (err) {
@@ -873,7 +1023,7 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
                 });
         }, "1");
     });
-
+    // image end point
     app.post('/api/admin/product_image_add', (req, res) => {
         var form = new multiparty.Form();
         checkAccessToken(req.headers, res, (userObj) => {
@@ -946,13 +1096,13 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
         const reqObj = req.body;
 
         checkAccessToken(req.headers, res, (userObj) => {
-            helper.checkParameterValid(res, reqObj, ["product_id","image_id"], () => {
+            helper.checkParameterValid(res, reqObj, ["product_id", "image_id"], () => {
 
                 db.query(`
                     UPDATE image_detail
                     SET status = ?, updated_date = NOW()
                     WHERE product_id = ? AND image_id = ? AND status = ?`,
-                    ["2", reqObj.product_id[0],reqObj.image_id, "1"], (err, uresult) => {
+                    ["2", reqObj.product_id[0], reqObj.image_id, "1"], (err, uresult) => {
                         if (err) {
                             helper.throwHtmlError(err, res);
                             return;
@@ -960,7 +1110,7 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
                         if (uresult.affectedRows > 0) {
                             res.json({ status: "1", message: messages.imageDelete });
                         } else {
-                            res.json({ status: "0", message: messages.fail});
+                            res.json({ status: "0", message: messages.fail });
                         }
                     }
                 );
