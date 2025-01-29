@@ -614,5 +614,49 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
             })
         })
     })
+
+    app.post('/api/get_zone_area',(req, res) => {
+        helper.dlog(req.body);
+        var reqObj = req.body;
+
+        const query = `
+        SELECT zd.zone_id, zd.zone_name, ad.area_id, ad.name 
+        FROM zone_detail zd
+        LEFT JOIN area_detail ad ON zd.zone_id = ad.zone_id 
+        WHERE zd.status = ? AND ad.status = ?
+    `;
+    
+    db.query(query, ["1", "1"], (err, result) => {
+        if (err) {
+            helper.throwHtmlError(err, res);
+            return;
+        }
+        
+        const zoneMap = {};
+        
+        result.forEach(row => {
+            if (!zoneMap[row.zone_id]) {
+                zoneMap[row.zone_id] = {
+                    zone_id: row.zone_id,
+                    zone_name: row.zone_name,
+                    area_list: []
+                };
+            }
+            if (row.area_id) {
+                zoneMap[row.zone_id].area_list.push({
+                    area_id: row.area_id,
+                    name: row.name
+                });
+            }
+        });
+        
+        res.json({
+            status: "1",
+            payload: Object.values(zoneMap),
+            message: messages.success
+        });
+    });
+});
+
 }
 

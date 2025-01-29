@@ -898,7 +898,7 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
         var reqObj = req.body;
 
         checkAccessToken(req.headers, res, (userObj) => {
-            helper.checkParameterValid(res, reqObj,["product_id"], () => {
+            helper.checkParameterValid(res, reqObj, ["product_id"], () => {
 
                 getProductDetail(res, reqObj.product_id)
             })
@@ -1114,6 +1114,278 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
                         }
                     }
                 );
+            });
+        }, "1");
+    });
+           // zone end point
+    app.post('/api/admin/zone_add', (req, res) => {
+        helper.dlog(req.body);
+        const reqObj = req.body;
+
+        // Check access token validity
+        checkAccessToken(req.headers, res, (userObj) => {
+            // Validate required parameters
+            helper.checkParameterValid(res, reqObj, ["zone_name"], () => {
+                // Check if the zone already exists
+                db.query(
+                    `SELECT COUNT(*) as count FROM zone_detail WHERE zone_name = ? LIMIT 1`,
+                    [reqObj.zone_name],
+                    (err, result) => {
+                        if (err) {
+                            // Handle database error
+                            helper.throwHtmlError(err, res);
+                            return;
+                        }
+
+                        // If zone exists, send a response
+                        if (result[0].count > 0) {
+                            res.json({ status: "0", message: messages.zoneExist });
+                            return;
+                        }
+
+                        // If zone does not exist, insert new record
+                        db.query(
+                            `INSERT INTO zone_detail (zone_name, created_date, updated_date, status) VALUES (?, NOW(), NOW(),?)`,
+                            [reqObj.zone_name,"1"],
+                            (err, result) => {
+                                if (err) {
+                                    // Handle database error
+                                    helper.throwHtmlError(err, res);
+                                    return;
+                                }
+
+                                if (result.affectedRows > 0) {
+                                    res.json({
+                                        status: "1",
+                                        payload: {
+                                            "zone_id": result.insertId,
+                                            "zone_name": reqObj.zone_name
+                                        },
+                                        message: messages.zoneAdd
+                                    });
+                                } else {
+                                    res.json({ status: "0", message: messages.fail });
+                                }
+                            }
+                        );
+                    }
+                );
+            });
+        }, "1");
+    });
+
+    app.post('/api/admin/zone_update', (req, res) => {
+        helper.dlog(req.body);
+        var reqObj = req.body;
+
+        checkAccessToken(req.headers, res, (userObj) => {
+            helper.checkParameterValid(res, reqObj, ["zone_id", "zone_name"], () => {
+
+                db.query(
+                    ` UPDATE zone_detail 
+                    SET zone_name = ?, updated_date = NOW() 
+                     WHERE zone_id = ? AND status = ?`,
+                    [reqObj.zone_name, reqObj.zone_id, "1"],
+                    (err, result) => {
+                        if (err) {
+                            // Log and handle database errors
+                            helper.throwHtmlError(err, res);
+                            return;
+                        }
+                        if (result.affectedRows > 0) {
+                            res.json({ status: "1", message: messages.zoneUpdate });
+                        } else {
+                            res.json({ status: "0", message: messages.fail });
+                        }
+                    }
+                );
+
+            });
+        }, "1");
+    });
+
+    app.post('/api/admin/zone_list', (req, res) => {
+        helper.dlog(req.body);
+        var reqObj = req.body;
+
+        checkAccessToken(req.headers, res, (userObj) => {
+
+            db.query(`SELECT zone_id, zone_name FROM zone_detail WHERE status = ?`,
+                ["1"], (err, result) => {
+                    if (err) {
+                        // Log and handle database errors
+                        helper.throwHtmlError(err, res);
+                        return;
+                    }
+                    res.json({ status: "1", payload: result.replace_null(), message: messages.success });
+                }
+            );
+
+        }, "1");
+    });
+
+    app.post('/api/admin/zone_delete', (req, res) => {
+        helper.dlog(req.body);
+        var reqObj = req.body;
+
+        checkAccessToken(req.headers, res, (userObj) => {
+            helper.checkParameterValid(res, reqObj, ["zone_id"], () => {
+
+                db.query(
+                    `UPDATE zone_detail 
+                    SET status = ?, updated_date = NOW() 
+                    WHERE zone_id = ? AND status = ?`,
+                    ["2", reqObj.zone_id, "1"], (err, result) => {
+                        if (err) {
+                            // Log and handle database errors
+                            helper.throwHtmlError(err, res);
+                            return;
+                        }
+                        if (result) {
+                            res.json({ status: "1", message: messages.zoneDelete });
+                        } else {
+                            res.json({ status: "0", message: messages.fail });
+                        }
+                    }
+                );
+
+            });
+        }, "1");
+    });
+        // area end point
+    app.post('/api/admin/area_add', (req, res) => {
+        helper.dlog(req.body);
+        const reqObj = req.body;
+
+        // Check access token validity
+        checkAccessToken(req.headers, res, (userObj) => {
+            // Validate required parameters
+            helper.checkParameterValid(res, reqObj, ["zone_id","name"], () => {
+                // Check if the zone already exists
+                db.query(
+                    `SELECT COUNT(*) as count FROM area_detail WHERE zone_id = ? AND name = ? LIMIT 1`,
+                    [reqObj.zone_id,reqObj.name],
+                    (err, result) => {
+                        if (err) {
+                            // Handle database error
+                            helper.throwHtmlError(err, res);
+                            return;
+                        }
+
+                        // If zone exists, send a response
+                        if (result[0].count > 0) {
+                            res.json({ status: "0", message: messages.areaExist });
+                            return;
+                        }
+
+                        // If zone does not exist, insert new record
+                        db.query(
+                            `INSERT INTO area_detail (zone_id, name, created_date, update_date, status) 
+                            VALUES (?, ?,NOW(), NOW(),?)`,
+                            [reqObj.zone_id, reqObj.name,"1"],
+                            (err, result) => {
+                                if (err) {
+                                    // Handle database error
+                                    helper.throwHtmlError(err, res);
+                                    return;
+                                }
+
+                                if (result.affectedRows > 0) {
+                                    res.json({
+                                        status: "1",
+                                        payload: {
+                                            "area_id": result.insertId,
+                                            "zone_id": reqObj.zone_id,
+                                            "name": reqObj.name 
+                                        },
+                                        message: messages.areaAdd
+                                    });
+                                } else {
+                                    res.json({ status: "0", message: messages.fail });
+                                }
+                            }
+                        );
+                    }
+                );
+            });
+        }, "1");
+    });
+
+    app.post('/api/admin/area_update', (req, res) => {
+        helper.dlog(req.body);
+        var reqObj = req.body;
+
+        checkAccessToken(req.headers, res, (userObj) => {
+            helper.checkParameterValid(res, reqObj, [,"area_id", "zone_id", "name"], () => {
+
+                db.query(
+                    ` UPDATE area_detail 
+                    SET zone_id = ?, name = ?, update_date = NOW() 
+                     WHERE area_id = ? AND status = ?`,
+                    [reqObj.zone_id,reqObj.name, reqObj.area_id, "1"],
+                    (err, result) => {
+                        if (err) {
+                            // Log and handle database errors
+                            helper.throwHtmlError(err, res);
+                            return;
+                        }
+                        if (result.affectedRows > 0) {
+                            res.json({ status: "1", message: messages.areaUpdate });
+                        } else {
+                            res.json({ status: "0", message: messages.fail });
+                        }
+                    }
+                );
+
+            });
+        }, "1");
+    });
+
+    app.post('/api/admin/area_list', (req, res) => {
+        helper.dlog(req.body);
+        var reqObj = req.body;
+
+        checkAccessToken(req.headers, res, (userObj) => {
+
+            db.query(`SELECT area_id,zone_id, name FROM area_detail WHERE status = ?`,
+                ["1"], (err, result) => {
+                    if (err) {
+                        // Log and handle database errors
+                        helper.throwHtmlError(err, res);
+                        return;
+                    }
+                    res.json({ status: "1", payload: result.replace_null(), message: messages.success });
+                }
+            );
+
+        }, "1");
+    });
+
+    app.post('/api/admin/area_delete', (req, res) => {
+        helper.dlog(req.body);
+        var reqObj = req.body;
+
+        checkAccessToken(req.headers, res, (userObj) => {
+            helper.checkParameterValid(res, reqObj, ["area_id"], () => {
+
+                db.query(
+                    `UPDATE area_detail 
+                    SET status = ?, update_date = NOW() 
+                    WHERE area_id = ? AND status = ?`,
+                    ["2", reqObj.area_id, "1"], (err, result) => {
+                        if (err) {
+                            // Log and handle database errors
+                            helper.throwHtmlError(err, res);
+                            return;
+                        }
+                        if (result) {
+                            res.json({ status: "1", message: messages.areaDelete });
+                        } else {
+                            res.json({ status: "0", message: messages.fail });
+                        }
+                    }
+                );
+
             });
         }, "1");
     });

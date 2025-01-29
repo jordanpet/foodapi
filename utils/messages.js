@@ -59,6 +59,14 @@ const messages = {
   imageUpdate: "Image updated successfully",
   imageDelete: "Image deleted successfully",
   imageExist: "Image already exists",
+  zoneAdd: "Zone added successfully",
+  zoneUpdate: "Zone updated successfully",
+  zoneDelete: "Zone deleted successfully",
+  zoneExist: "Zone already exists",
+  areaAdd: "Area added successfully",
+  areaUpdate: "Area updated successfully",
+  areaDelete: "Area deleted successfully", 
+  areaExist: "Area already exists",
 
 }; 
 module.exports =  messages;
