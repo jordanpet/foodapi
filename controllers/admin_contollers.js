@@ -105,112 +105,6 @@ function saveImage(imageFile, savePath) {
     })
 }
 
-function getProductDetail(res, product_id) {
-    // First Query: Get Product Details
-    const productDetailsQuery = `
-        SELECT 
-            pd.product_id, 
-            pd.category_id, 
-            pd.brand_id, 
-            pd.type_id, 
-            pd.name, 
-            pd.details, 
-            pd.unit_name, 
-            pd.unit_value, 
-            pd.price, 
-            pd.status, 
-            pd.created_date, 
-            pd.updated_date, 
-            cd.category_name, 
-            IFNULL(bd.brand_name, '') AS brand_name, 
-            td.type_name
-        FROM 
-            product_details AS pd
-        INNER JOIN 
-            category_details AS cd 
-            ON pd.category_id = cd.category_id
-        LEFT JOIN 
-            brand_detail AS bd 
-            ON pd.brand_id = bd.brand_id
-        INNER JOIN 
-            type_details AS td 
-            ON pd.type_id = td.type_id
-        WHERE 
-            pd.status = ? 
-            AND pd.product_id = ?;
-    `;
-
-    // Second Query: Get Nutrition Details
-    const nutritionDetailsQuery = `
-        SELECT 
-            nutrition_id, 
-            product_id, 
-            nutrition_name, 
-            nutrition_value, 
-            nutrition_weight, 
-            nutrition_date, 
-            status, 
-            created_date, 
-            updated_date
-        FROM 
-            nutrition_details 
-        WHERE 
-            product_id = ? 
-            AND status = ?
-        ORDER BY 
-            nutrition_name;
-    `;
-
-    // Third Query: Get Image Details
-    const imageDetailsQuery = `
-        SELECT 
-            image_id, 
-            product_id, 
-            image 
-        FROM 
-            image_detail 
-        WHERE 
-            product_id = ? 
-            AND status = ?;
-    `;
-
-    // Execute queries sequentially
-    db.query(productDetailsQuery, ["1", product_id], (err, productResult) => {
-        if (err) {
-            helper.throwHtmlError(err, res);
-            return;
-        }
-
-        if (productResult.length === 0) {
-            return res.json({ status: "0", message: "Invalid item" });
-        }
-
-        // Product details found, proceed to get nutrition details
-        db.query(nutritionDetailsQuery, [product_id, "1"], (err, nutritionResult) => {
-            if (err) {
-                helper.throwHtmlError(err, res);
-                return;
-            }
-
-            // Proceed to get image details
-            db.query(imageDetailsQuery, [product_id, "1"], (err, imageResult) => {
-                if (err) {
-                    helper.throwHtmlError(err, res);
-                    return;
-                }
-
-                // Combine all results into a single response
-                const responsePayload = {
-                    ...productResult[0],
-                    nutrition_list: nutritionResult,
-                    images: imageResult,
-                };
-
-                res.json({ status: "1", payload: responsePayload, message: "Success" });
-            });
-        });
-    });
-}
 
 
 // //END-POINT
@@ -865,6 +759,7 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
                 });
         }, "1");
     });
+    
     app.post('/api/admin/product_list', (req, res) => {
         helper.dlog(req.body);
         var reqObj = req.body;
@@ -890,18 +785,6 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
                     res.json({ status: "1", payload: result, message: messages.success });
                 }
             );
-        }, "1");
-    });
-
-    app.post('/api/admin/product_detail', (req, res) => {
-        helper.dlog(req.body);
-        var reqObj = req.body;
-
-        checkAccessToken(req.headers, res, (userObj) => {
-            helper.checkParameterValid(res, reqObj, ["product_id"], () => {
-
-                getProductDetail(res, reqObj.product_id)
-            })
         }, "1");
     });
 
@@ -1117,7 +1000,7 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
             });
         }, "1");
     });
-           // zone end point
+    // zone end point
     app.post('/api/admin/zone_add', (req, res) => {
         helper.dlog(req.body);
         const reqObj = req.body;
@@ -1146,7 +1029,7 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
                         // If zone does not exist, insert new record
                         db.query(
                             `INSERT INTO zone_detail (zone_name, created_date, updated_date, status) VALUES (?, NOW(), NOW(),?)`,
-                            [reqObj.zone_name,"1"],
+                            [reqObj.zone_name, "1"],
                             (err, result) => {
                                 if (err) {
                                     // Handle database error
@@ -1252,7 +1135,7 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
             });
         }, "1");
     });
-        // area end point
+    // area end point
     app.post('/api/admin/area_add', (req, res) => {
         helper.dlog(req.body);
         const reqObj = req.body;
@@ -1260,11 +1143,11 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
         // Check access token validity
         checkAccessToken(req.headers, res, (userObj) => {
             // Validate required parameters
-            helper.checkParameterValid(res, reqObj, ["zone_id","name"], () => {
+            helper.checkParameterValid(res, reqObj, ["zone_id", "name"], () => {
                 // Check if the zone already exists
                 db.query(
                     `SELECT COUNT(*) as count FROM area_detail WHERE zone_id = ? AND name = ? LIMIT 1`,
-                    [reqObj.zone_id,reqObj.name],
+                    [reqObj.zone_id, reqObj.name],
                     (err, result) => {
                         if (err) {
                             // Handle database error
@@ -1282,7 +1165,7 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
                         db.query(
                             `INSERT INTO area_detail (zone_id, name, created_date, update_date, status) 
                             VALUES (?, ?,NOW(), NOW(),?)`,
-                            [reqObj.zone_id, reqObj.name,"1"],
+                            [reqObj.zone_id, reqObj.name, "1"],
                             (err, result) => {
                                 if (err) {
                                     // Handle database error
@@ -1296,7 +1179,7 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
                                         payload: {
                                             "area_id": result.insertId,
                                             "zone_id": reqObj.zone_id,
-                                            "name": reqObj.name 
+                                            "name": reqObj.name
                                         },
                                         message: messages.areaAdd
                                     });
@@ -1316,13 +1199,13 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
         var reqObj = req.body;
 
         checkAccessToken(req.headers, res, (userObj) => {
-            helper.checkParameterValid(res, reqObj, [,"area_id", "zone_id", "name"], () => {
+            helper.checkParameterValid(res, reqObj, [, "area_id", "zone_id", "name"], () => {
 
                 db.query(
                     ` UPDATE area_detail 
                     SET zone_id = ?, name = ?, update_date = NOW() 
                      WHERE area_id = ? AND status = ?`,
-                    [reqObj.zone_id,reqObj.name, reqObj.area_id, "1"],
+                    [reqObj.zone_id, reqObj.name, reqObj.area_id, "1"],
                     (err, result) => {
                         if (err) {
                             // Log and handle database errors
@@ -1389,6 +1272,149 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
             });
         }, "1");
     });
+
+    app.post('/api/admin/offer_add', (req, res) => {
+        helper.dlog(req.body);
+        var reqObj = req.body;
+
+        checkAccessToken(req.headers, res, (userObj) => {
+            helper.checkParameterValid(res, reqObj, ["product_id", "price", "start_date",
+                "end_date"], () => {
+
+                    db.query(`
+                        INSERT INTO offer_detail ( product_id, price, start_date,
+                         end_date, status, created_date,updated_date)
+                          VALUE (?,?,?,?,?, NOW(), NOW())` ,
+                        [reqObj.product_id, reqObj.price, reqObj.start_date,
+                        reqObj.end_date, "1"], (err, result) => {
+                            if (err) {
+                                // Log and handle database errors
+                                helper.throwHtmlError(err, res);
+                                return;
+                            }
+                            if (result) {
+                                res.json({ status: "1", message: messages.offerAdd });
+                            } else {
+                                res.json({ status: "0", message: messages.fail });
+                            }
+
+                        }
+                    );
+
+                });
+        }, "1");
+    });
+
+    app.post('/api/admin/offer_delete', (req, res) => {
+        helper.dlog(req.body);
+        var reqObj = req.body;
+
+        checkAccessToken(req.headers, res, (userObj) => {
+            helper.checkParameterValid(res, reqObj, ["offer_id"], () => {
+
+                db.query(`
+                        UPDATE offer_detail SET status = ?,  updated_date = NOW() 
+                        WHERE offer_id = ? AND status = ?` ,
+                    ["2", reqObj.offer_id, "1"], (err, result) => {
+                        if (err) {
+                            // Log and handle database errors
+                            helper.throwHtmlError(err, res);
+                            return;
+                        }
+                        if (result) {
+                            res.json({ status: "1", message: messages.offerDelete });
+                        } else {
+                            res.json({ status: "0", message: messages.fail });
+                        }
+                    }
+                );
+
+            });
+        }, "1");
+    });
+
+    app.post('/api/admin/offer_list', (req, res) => {
+        helper.dlog(req.body);
+        var reqObj = req.body;
+
+        checkAccessToken(req.headers, res, (userObj) => {
+
+            db.query(`
+                        SELECT offer_id, product_id, price, start_date, end_date, status, 
+                        created_date, updated_date FROM offer_detail 
+                        WHERE status = ? ORDER BY created_date ` , ["1"],
+                (err, result) => {
+                    if (err) {
+                        // Log and handle database errors
+                        helper.throwHtmlError(err, res);
+                        return;
+                    }
+                    res.json({ status: "1", payload: result.replace_null(), message: messages.success });
+
+                }
+            );
+        }, "1");
+    });
+
+    // app.post('/api/admin/about_update', (req, res) => {
+    //     helper.dlog(req.body);
+    //     var reqObj = req.body;
+
+    //     checkAccessToken(req.headers, res, (userObj) => {
+    //         helper.checkParameterValid(res, reqObj, ["about_id", "details", "display_order"], () => {
+
+    //             db.query(
+    //                 `
+    //                     UPDATE about_detail 
+    //                     SET details = ?, display_order = ?, updated_date = NOW() 
+    //                     WHERE about_id = ? AND status = ?
+    //                     `,
+    //                 [reqObj.details, reqObj.display_order, reqObj.about_id, "1"],
+    //                 (err, result) => {
+    //                     if (err) {
+    //                         // Log and handle database errors
+    //                         helper.throwHtmlError(err, res);
+    //                         return;
+    //                     }
+    //                     if (result.affectedRows > 0) {
+    //                         res.json({ status: "1", message: messages.updated });
+    //                     } else {
+    //                         res.json({ status: "0", message: messages.fail });
+    //                     }
+    //                 }
+    //             );
+
+    //         });
+    //     }, "1");
+    // });
+
+    // app.post('/api/admin/about_delete', (req, res) => {
+    //     helper.dlog(req.body);
+    //     var reqObj = req.body;
+
+    //     checkAccessToken(req.headers, res, (userObj) => {
+    //         helper.checkParameterValid(res, reqObj, ["about_id"], () => {
+
+    //             db.query(`
+    //                     UPDATE about_detail SET status = ?,  updated_date = NOW() 
+    //                     WHERE about_id = ? AND status = ?` ,
+    //                 ["2", reqObj.about_id, "1"], (err, result) => {
+    //                     if (err) {
+    //                         // Log and handle database errors
+    //                         helper.throwHtmlError(err, res);
+    //                         return;
+    //                     }
+    //                     if (result) {
+    //                         res.json({ status: "1", message: messages.deleted });
+    //                     } else {
+    //                         res.json({ status: "0", message: messages.fail });
+    //                     }
+    //                 }
+    //             );
+
+    //         });
+    //     }, "1");
+    // });
 
     // app.post('/api/admin/restaurant_add', (req, res) => {
     //     var form = new multiparty.Form();

@@ -67,6 +67,10 @@ const messages = {
   areaUpdate: "Area updated successfully",
   areaDelete: "Area deleted successfully", 
   areaExist: "Area already exists",
+  offerAdd: "Offer added successfully",
+  offerUpdate: "Offer updated successfully",
+  offerDelete: "Offer deleted successfully",
+  offerExist: "Offer already exists"
 
 }; 
 module.exports =  messages;

@@ -128,6 +128,118 @@ function checkAccessToken(headerObj, res, callback, require_type = "") {
     })
 }
 
+
+function getProductDetail(res, product_id) {
+    // First Query: Get Product Details
+    const productDetailsQuery = `
+        SELECT 
+            pd.product_id, 
+            pd.category_id, 
+            pd.brand_id, 
+            pd.type_id, 
+            pd.name, 
+            pd.details, 
+            pd.unit_name, 
+            pd.unit_value, 
+            pd.price, 
+            pd.status, 
+            pd.created_date, 
+            pd.updated_date, 
+            cd.category_name, 
+            IFNULL(bd.brand_name, '') AS brand_name, 
+            td.type_name IFNULL(od.price, pd.price) AS offer_price, 
+            IFNULL(od.start_date, '') AS start_date,
+            IFNULL (od.end_date, '' ) AS end_date (CASE WHEN od.offer_id 
+            is NOT NULL THEN 1 ELSE 0 END) AS is_offer_active
+        FROM 
+            product_details AS pd
+        INNER JOIN 
+            category_details AS cd 
+            ON pd.category_id = cd.category_id
+        LEFT JOIN 
+            offer_detail AS od 
+            ON pd.product_id = od.product_id AND status = 1 
+            AND od.start_date <= NOW() AND od.end_date => NOW() 
+        INNER JOIN 
+            type_details AS td 
+            ON pd.type_id = td.type_id
+        WHERE 
+            pd.status = ? 
+            AND pd.product_id = ?;
+    `;
+
+    // Second Query: Get Nutrition Details
+    const nutritionDetailsQuery = `
+        SELECT 
+            nutrition_id, 
+            product_id, 
+            nutrition_name, 
+            nutrition_value, 
+            nutrition_weight, 
+            nutrition_date, 
+            status, 
+            created_date, 
+            updated_date
+        FROM 
+            nutrition_details 
+        WHERE 
+            product_id = ? 
+            AND status = ?
+        ORDER BY 
+            nutrition_name;
+    `;
+
+    // Third Query: Get Image Details
+    const imageDetailsQuery = `
+        SELECT 
+            image_id, 
+            product_id, 
+            image 
+        FROM 
+            image_detail 
+        WHERE 
+            product_id = ? 
+            AND status = ?;
+    `;
+
+    // Execute queries sequentially
+    db.query(productDetailsQuery, ["1", product_id], (err, productResult) => {
+        if (err) {
+            helper.throwHtmlError(err, res);
+            return;
+        }
+
+        if (productResult.length === 0) {
+            return res.json({ status: "0", message: "Invalid item" });
+        }
+
+        // Product details found, proceed to get nutrition details
+        db.query(nutritionDetailsQuery, [product_id, "1"], (err, nutritionResult) => {
+            if (err) {
+                helper.throwHtmlError(err, res);
+                return;
+            }
+
+            // Proceed to get image details
+            db.query(imageDetailsQuery, [product_id, "1"], (err, imageResult) => {
+                if (err) {
+                    helper.throwHtmlError(err, res);
+                    return;
+                }
+
+                // Combine all results into a single response
+                const responsePayload = {
+                    ...productResult[0],
+                    nutrition_list: nutritionResult,
+                    images: imageResult,
+                };
+
+                res.json({ status: "1", payload: responsePayload, message: "Success" });
+            });
+        });
+    });
+}
+
 //END-POINT
 module.exports.controllers = (app, io, user_socket_connect_list) => {
 
@@ -657,6 +769,104 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
         });
     });
 });
+
+app.post('/api/app/home', (req, res) => {
+    helper.dlog(req.body);
+    var reqObj = req.body;
+
+    checkAccessToken(req.headers, res, () => {
+        // First query - Fetch active offers
+        db.query(`
+                SELECT 
+                    od.price AS offer_price, od.start_date, od.end_date,
+                    pd.product_id, pd.category_id, pd.brand_id, pd.type_id, 
+                    pd.name, pd.details, pd.unit_name, pd.unit_value, pd.price, 
+                    imd.image, cd.category_name, td.type_name  
+                FROM offer_detail AS od
+                INNER JOIN product_details AS pd ON pd.product_id = od.product_id AND pd.status = 1
+                INNER JOIN image_detail AS imd ON pd.product_id = imd.product_id AND imd.status = 1
+                INNER JOIN category_details AS cd ON cd.category_id = pd.category_id AND cd.status = 1
+                INNER JOIN type_details AS td ON pd.type_id = td.type_id AND td.status = 1
+                WHERE od.status = 1 AND od.start_date <= NOW() AND od.end_date >= NOW();
+            `, (err, offerResult) => {
+            if (err) {
+                helper.throwHtmlError(err, res);
+                return;
+            }
+
+            // Second query - Fetch best-selling products
+            db.query(`
+                SELECT 
+                    pd.product_id, pd.category_id, pd.brand_id, pd.type_id, 
+                    pd.name, pd.details, pd.unit_name, pd.unit_value, pd.price, 
+                    imd.image, cd.category_name, td.type_name  
+                FROM product_details AS pd
+                INNER JOIN image_detail AS imd ON pd.product_id = imd.product_id AND imd.status = 1
+                INNER JOIN category_details AS cd ON cd.category_id = pd.category_id AND cd.status = 1
+                INNER JOIN type_details AS td ON pd.type_id = td.type_id AND td.status = 1
+                WHERE pd.category_id = ?;
+            `, ["1"], (err, bestSellResult) => {
+                if (err) {
+                    helper.throwHtmlError(err, res);
+                    return;
+                }
+
+                // Third query - Fetch type details
+                db.query(`
+                    SELECT type_id, type_name, image, color FROM type_details WHERE status = ?;
+                `, ["1"], (err, typeResult) => {
+                    if (err) {
+                        helper.throwHtmlError(err, res);
+                        return;
+                    }
+
+                    // Fourth query - Fetch latest 4 products
+                    db.query(`
+                        SELECT 
+                            pd.product_id, pd.category_id, pd.brand_id, pd.type_id, 
+                            pd.name, pd.details, pd.unit_name, pd.unit_value, pd.price, 
+                            imd.image, cd.category_name, td.type_name  
+                        FROM product_details AS pd
+                        INNER JOIN image_detail AS imd ON pd.product_id = imd.product_id AND imd.status = 1
+                        INNER JOIN category_details AS cd ON cd.category_id = pd.category_id AND cd.status = 1
+                        INNER JOIN type_details AS td ON pd.type_id = td.type_id AND td.status = 1
+                        ORDER BY pd.product_id DESC LIMIT 4;
+                    `, (err, latestProducts) => {
+                        if (err) {
+                            helper.throwHtmlError(err, res);
+                            return;
+                        }
+
+                        // Send the response after all queries complete
+                        res.json({
+                            status: "1",
+                            payload: {
+                                offer_list: offerResult,
+                                best_sell_list: bestSellResult,
+                                type_list: typeResult,
+                                list: latestProducts
+                            },
+                            message: messages.success
+                        });
+                    });
+                });
+            });
+        });
+    });
+});
+
+
+ app.post('/api/admin/product_detail', (req, res) => {
+        helper.dlog(req.body);
+        var reqObj = req.body;
+
+        checkAccessToken(req.headers, res, (userObj) => {
+            helper.checkParameterValid(res, reqObj, ["product_id"], () => {
+
+                getProductDetail(res, reqObj.product_id)
+            })
+        }, "1");
+    });
 
 }
 
