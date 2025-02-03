@@ -70,7 +70,9 @@ const messages = {
   offerAdd: "Offer added successfully",
   offerUpdate: "Offer updated successfully",
   offerDelete: "Offer deleted successfully",
-  offerExist: "Offer already exists"
+  offerExist: "Offer already exists",
+  favoriteAdd: "Favorite added successfully",
+  favoriteRemove: "Favorite Remove successfull"
 
 }; 
 module.exports =  messages;

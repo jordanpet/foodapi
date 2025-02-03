@@ -95,7 +95,6 @@ function checkAccessToken(headerObj, res, callback, require_type = "") {
         );
     });
 }
-
 function saveImage(imageFile, savePath) {
     fs.rename(imageFile.path, savePath, (err) => {
         if (err) {
@@ -104,8 +103,6 @@ function saveImage(imageFile, savePath) {
         }
     })
 }
-
-
 
 // //END-POINT
 module.exports.controllers = (app, io, user_socket_connect_list) => {
@@ -759,7 +756,7 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
                 });
         }, "1");
     });
-    
+
     app.post('/api/admin/product_list', (req, res) => {
         helper.dlog(req.body);
         var reqObj = req.body;

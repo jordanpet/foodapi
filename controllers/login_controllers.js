@@ -97,7 +97,7 @@ function checkAccessToken(headerObj, res, callback, require_type = "") {
                 mobile_code,
                 address,   
                 auth_token, 
-                device_token
+                device_token,
                 user_type,
                 status,
                 created_date, 
@@ -133,39 +133,27 @@ function getProductDetail(res, product_id) {
     // First Query: Get Product Details
     const productDetailsQuery = `
         SELECT 
-            pd.product_id, 
-            pd.category_id, 
-            pd.brand_id, 
-            pd.type_id, 
-            pd.name, 
-            pd.details, 
-            pd.unit_name, 
-            pd.unit_value, 
-            pd.price, 
-            pd.status, 
-            pd.created_date, 
-            pd.updated_date, 
-            cd.category_name, 
+            pd.product_id, pd.category_id, pd.brand_id, 
+            pd.type_id, pd.name, pd.details, pd.unit_name, 
+            pd.unit_value, pd.price, pd.status, pd.created_date, 
+            pd.updated_date, cd.category_name, 
+            (CASE WHEN fd.favorite_id IS NOT NULL THEN 1 ELSE 0 END) AS is_favorite,
             IFNULL(bd.brand_name, '') AS brand_name, 
-            td.type_name IFNULL(od.price, pd.price) AS offer_price, 
+            td.type_name, 
+            IFNULL(od.price, pd.price) AS offer_price, 
             IFNULL(od.start_date, '') AS start_date,
-            IFNULL (od.end_date, '' ) AS end_date (CASE WHEN od.offer_id 
-            is NOT NULL THEN 1 ELSE 0 END) AS is_offer_active
-        FROM 
-            product_details AS pd
-        INNER JOIN 
-            category_details AS cd 
-            ON pd.category_id = cd.category_id
-        LEFT JOIN 
-            offer_detail AS od 
-            ON pd.product_id = od.product_id AND status = 1 
-            AND od.start_date <= NOW() AND od.end_date => NOW() 
-        INNER JOIN 
-            type_details AS td 
-            ON pd.type_id = td.type_id
-        WHERE 
-            pd.status = ? 
-            AND pd.product_id = ?;
+            IFNULL(od.end_date, '') AS end_date, 
+            (CASE WHEN od.offer_id IS NOT NULL THEN 1 ELSE 0 END) AS is_offer_active
+        FROM product_details AS pd
+        INNER JOIN category_details AS cd ON pd.category_id = cd.category_id
+        LEFT JOIN brand_detail AS bd ON pd.brand_id = bd.brand_id 
+        LEFT JOIN favorite_detail AS fd ON pd.product_id = fd.product_id AND fd.status = 1
+        LEFT JOIN offer_detail AS od ON pd.product_id = od.product_id 
+            AND od.status = 1 
+            AND od.start_date <= NOW() 
+            AND od.end_date >= NOW()
+        INNER JOIN type_details AS td ON pd.type_id = td.type_id
+        WHERE pd.status = ? AND pd.product_id = ?;
     `;
 
     // Second Query: Get Nutrition Details
@@ -180,13 +168,10 @@ function getProductDetail(res, product_id) {
             status, 
             created_date, 
             updated_date
-        FROM 
-            nutrition_details 
-        WHERE 
-            product_id = ? 
+        FROM nutrition_details 
+        WHERE product_id = ? 
             AND status = ?
-        ORDER BY 
-            nutrition_name;
+        ORDER BY nutrition_name;
     `;
 
     // Third Query: Get Image Details
@@ -195,15 +180,13 @@ function getProductDetail(res, product_id) {
             image_id, 
             product_id, 
             image 
-        FROM 
-            image_detail 
-        WHERE 
-            product_id = ? 
+        FROM image_detail 
+        WHERE product_id = ? 
             AND status = ?;
     `;
 
     // Execute queries sequentially
-    db.query(productDetailsQuery, ["1", product_id], (err, productResult) => {
+    db.query(productDetailsQuery, [1, product_id], (err, productResult) => {
         if (err) {
             helper.throwHtmlError(err, res);
             return;
@@ -214,14 +197,14 @@ function getProductDetail(res, product_id) {
         }
 
         // Product details found, proceed to get nutrition details
-        db.query(nutritionDetailsQuery, [product_id, "1"], (err, nutritionResult) => {
+        db.query(nutritionDetailsQuery, [product_id, 1], (err, nutritionResult) => {
             if (err) {
                 helper.throwHtmlError(err, res);
                 return;
             }
 
             // Proceed to get image details
-            db.query(imageDetailsQuery, [product_id, "1"], (err, imageResult) => {
+            db.query(imageDetailsQuery, [product_id, 1], (err, imageResult) => {
                 if (err) {
                     helper.throwHtmlError(err, res);
                     return;
@@ -240,6 +223,7 @@ function getProductDetail(res, product_id) {
     });
 }
 
+
 //END-POINT
 module.exports.controllers = (app, io, user_socket_connect_list) => {
 
@@ -252,7 +236,7 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
             ["username", "name", "email", "mobile", "mobile_code", "address", "password", "device_token"], () => {
 
                 // New Username Rules using validateUsername
-                if (!validateUsername(reqObj.username)) {
+                if (!helper.validateUsername(reqObj.username)) {
                     // Generate username suggestions
                     const suggestions = helper.generateUsername(reqObj.username);
                     return res.status(400).json({
@@ -727,7 +711,7 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
         })
     })
 
-    app.post('/api/get_zone_area',(req, res) => {
+    app.post('/api/get_zone_area', (req, res) => {
         helper.dlog(req.body);
         var reqObj = req.body;
 
@@ -737,126 +721,142 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
         LEFT JOIN area_detail ad ON zd.zone_id = ad.zone_id 
         WHERE zd.status = ? AND ad.status = ?
     `;
-    
-    db.query(query, ["1", "1"], (err, result) => {
-        if (err) {
-            helper.throwHtmlError(err, res);
-            return;
-        }
-        
-        const zoneMap = {};
-        
-        result.forEach(row => {
-            if (!zoneMap[row.zone_id]) {
-                zoneMap[row.zone_id] = {
-                    zone_id: row.zone_id,
-                    zone_name: row.zone_name,
-                    area_list: []
-                };
-            }
-            if (row.area_id) {
-                zoneMap[row.zone_id].area_list.push({
-                    area_id: row.area_id,
-                    name: row.name
-                });
-            }
-        });
-        
-        res.json({
-            status: "1",
-            payload: Object.values(zoneMap),
-            message: messages.success
-        });
-    });
-});
 
-app.post('/api/app/home', (req, res) => {
-    helper.dlog(req.body);
-    var reqObj = req.body;
-
-    checkAccessToken(req.headers, res, () => {
-        // First query - Fetch active offers
-        db.query(`
-                SELECT 
-                    od.price AS offer_price, od.start_date, od.end_date,
-                    pd.product_id, pd.category_id, pd.brand_id, pd.type_id, 
-                    pd.name, pd.details, pd.unit_name, pd.unit_value, pd.price, 
-                    imd.image, cd.category_name, td.type_name  
-                FROM offer_detail AS od
-                INNER JOIN product_details AS pd ON pd.product_id = od.product_id AND pd.status = 1
-                INNER JOIN image_detail AS imd ON pd.product_id = imd.product_id AND imd.status = 1
-                INNER JOIN category_details AS cd ON cd.category_id = pd.category_id AND cd.status = 1
-                INNER JOIN type_details AS td ON pd.type_id = td.type_id AND td.status = 1
-                WHERE od.status = 1 AND od.start_date <= NOW() AND od.end_date >= NOW();
-            `, (err, offerResult) => {
+        db.query(query, ["1", "1"], (err, result) => {
             if (err) {
                 helper.throwHtmlError(err, res);
                 return;
             }
 
-            // Second query - Fetch best-selling products
+            const zoneMap = {};
+
+            result.forEach(row => {
+                if (!zoneMap[row.zone_id]) {
+                    zoneMap[row.zone_id] = {
+                        zone_id: row.zone_id,
+                        zone_name: row.zone_name,
+                        area_list: []
+                    };
+                }
+                if (row.area_id) {
+                    zoneMap[row.zone_id].area_list.push({
+                        area_id: row.area_id,
+                        name: row.name
+                    });
+                }
+            });
+
+            res.json({
+                status: "1",
+                payload: Object.values(zoneMap),
+                message: messages.success
+            });
+        });
+    });
+
+    app.post('/api/app/home', (req, res) => {
+        helper.dlog(req.body);
+        var reqObj = req.body;
+
+        checkAccessToken(req.headers, res, () => {
+            // First query - Fetch active offers
             db.query(`
-                SELECT 
-                    pd.product_id, pd.category_id, pd.brand_id, pd.type_id, 
-                    pd.name, pd.details, pd.unit_name, pd.unit_value, pd.price, 
-                    imd.image, cd.category_name, td.type_name  
-                FROM product_details AS pd
-                INNER JOIN image_detail AS imd ON pd.product_id = imd.product_id AND imd.status = 1
-                INNER JOIN category_details AS cd ON cd.category_id = pd.category_id AND cd.status = 1
-                INNER JOIN type_details AS td ON pd.type_id = td.type_id AND td.status = 1
-                WHERE pd.category_id = ?;
-            `, ["1"], (err, bestSellResult) => {
+               SELECT 
+    od.price AS offer_price, od.start_date, od.end_date,pd.product_id, 
+    pd.category_id, pd.brand_id, pd.type_id, pd.details, pd.unit_name, 
+    pd.unit_value, pd.price, 
+    (CASE WHEN imd.image != '' 
+        THEN CONCAT('", image_base_url ,"', imd.image) 
+        ELSE '' 
+    END) AS image,  
+    cd.category_name, 
+    td.type_name, 
+    (CASE WHEN fd.favorite_id IS NOT NULL THEN 1 ELSE 0 END) AS is_favorite
+FROM offer_detail AS od
+INNER JOIN product_details AS pd ON pd.product_id = od.product_id AND pd.status = 1
+INNER JOIN image_detail AS imd ON pd.product_id = imd.product_id AND imd.status = 1
+INNER JOIN category_details AS cd ON cd.category_id = pd.category_id AND cd.status = 1
+LEFT JOIN favorite_detail AS fd ON pd.product_id = fd.product_id AND fd.status = 1
+INNER JOIN type_details AS td ON pd.type_id = td.type_id AND td.status = 1
+WHERE od.status = 1 AND od.start_date <= NOW() AND od.end_date >= NOW();
+`, (err, offerResult) => {
                 if (err) {
                     helper.throwHtmlError(err, res);
                     return;
                 }
 
-                // Third query - Fetch type details
+                // Second query - Fetch best-selling products
                 db.query(`
-                    SELECT type_id, type_name, image, color FROM type_details WHERE status = ?;
-                `, ["1"], (err, typeResult) => {
+               SELECT 
+    pd.product_id, pd.category_id, pd.brand_id, pd.type_id, pd.name, 
+    pd.details, pd.unit_name,  pd.unit_value, pd.price, 
+    (CASE WHEN imd.image != '' 
+        THEN CONCAT('"+ image_base_url+"','',imd.image) 
+        ELSE '' 
+    END) AS image, 
+    cd.category_name, 
+    td.type_name,
+    (CASE WHEN fd.favorite_id IS NOT NULL THEN 1 ELSE 0 END) AS is_favorite 
+FROM product_details AS pd
+LEFT JOIN favorite_detail AS fd ON pd.product_id = fd.product_id AND fd.status = 1
+INNER JOIN image_detail AS imd ON pd.product_id = imd.product_id AND imd.status = 1
+INNER JOIN category_details AS cd ON cd.category_id = pd.category_id AND cd.status = 1
+INNER JOIN type_details AS td ON pd.type_id = td.type_id AND td.status = 1
+WHERE pd.category_id = ?;
+        `, ["1"], (err, bestSellResult) => {
                     if (err) {
                         helper.throwHtmlError(err, res);
                         return;
                     }
 
-                    // Fourth query - Fetch latest 4 products
+                    // Third query - Fetch type details
                     db.query(`
-                        SELECT 
-                            pd.product_id, pd.category_id, pd.brand_id, pd.type_id, 
-                            pd.name, pd.details, pd.unit_name, pd.unit_value, pd.price, 
-                            imd.image, cd.category_name, td.type_name  
-                        FROM product_details AS pd
-                        INNER JOIN image_detail AS imd ON pd.product_id = imd.product_id AND imd.status = 1
-                        INNER JOIN category_details AS cd ON cd.category_id = pd.category_id AND cd.status = 1
-                        INNER JOIN type_details AS td ON pd.type_id = td.type_id AND td.status = 1
-                        ORDER BY pd.product_id DESC LIMIT 4;
-                    `, (err, latestProducts) => {
+                    SELECT 
+                        type_id, type_name, (CASE WHEN image != '' THEN CONCAT('"+image_base_url+"','',image)ELSE '' END)
+                        AS image, color FROM type_details WHERE status = ?;`, 
+                        ["1"], (err, typeResult) => {
                         if (err) {
                             helper.throwHtmlError(err, res);
                             return;
                         }
 
-                        // Send the response after all queries complete
-                        res.json({
-                            status: "1",
-                            payload: {
-                                offer_list: offerResult,
-                                best_sell_list: bestSellResult,
-                                type_list: typeResult,
-                                list: latestProducts
-                            },
-                            message: messages.success
+                        // Fourth query - Fetch latest 4 products
+                        db.query(`
+                        SELECT 
+                            pd.product_id, pd.category_id, pd.brand_id, pd.type_id, 
+                            pd.name, pd.details, pd.unit_name, pd.unit_value, pd.price, 
+                        (CASE WHEN imd.image != '' THEN CONCAT('"+image_base_url +"','', imd.image)ELSE ''END) 
+                        AS image, cd.category_name, td.type_name FROM product_details AS pd
+                        LEFT JOIN favorite_detail AS fd ON pd.product_id = fd.product_id AND  fd.status = 1
+                        INNER JOIN image_detail AS imd ON pd.product_id = imd.product_id AND imd.status = 1
+                        INNER JOIN category_details AS cd ON cd.category_id = pd.category_id AND cd.status = 1
+                        INNER JOIN type_details AS td ON pd.type_id = td.type_id AND td.status = 1
+                        ORDER BY pd.product_id DESC LIMIT 4;
+                    `, (err, latestProducts) => {
+                            if (err) {
+                                helper.throwHtmlError(err, res);
+                                return;
+                            }
+
+                            // Send the response after all queries complete
+                            res.json({
+                                status: "1",
+                                payload: {
+                                    offer_list: offerResult,
+                                    best_sell_list: bestSellResult,
+                                    type_list: typeResult,
+                                    list: latestProducts
+                                },
+                                message: messages.success
+                            });
                         });
                     });
                 });
             });
         });
     });
-});
 
-
- app.post('/api/admin/product_detail', (req, res) => {
+    app.post('/api/admin/product_detail', (req, res) => {
         helper.dlog(req.body);
         var reqObj = req.body;
 
@@ -868,5 +868,158 @@ app.post('/api/app/home', (req, res) => {
         }, "1");
     });
 
+    app.post('/api/app/add_remove_favorite', (req, res) => {
+        helper.dlog(req.body);
+        var reqObj = req.body;
+
+        checkAccessToken(req.headers, res, (userObj) => {
+            helper.checkParameterValid(res, reqObj, ["product_id"], () => {
+                db.query(
+                    `SELECT favorite_id FROM favorite_detail 
+                     WHERE product_id = ? AND user_id = ? AND status = 1`,
+                    [reqObj.product_id, userObj.user_id],
+                    (err, result) => {
+                        if (err) {
+                            helper.throwHtmlError(err, res);
+                            return;
+                        }
+
+                        if (result.length > 0) {
+                            // Remove from favorites
+                            db.query(
+                                `DELETE FROM favorite_detail WHERE product_id = ? AND user_id = ?`,
+                                [reqObj.product_id, userObj.user_id],
+                                (err) => {
+                                    if (err) {
+                                        helper.throwHtmlError(err, res);
+                                        return;
+                                    }
+                                    res.json({ status: "1", message: messages.favoriteRemove });
+                                }
+                            );
+                        } else {
+                            // Add to favorites
+                            db.query(
+                                `INSERT INTO favorite_detail (product_id, user_id, status) VALUES (?, ?, 1)`,
+                                [reqObj.product_id, userObj.user_id],
+                                (err, result) => {
+                                    if (err) {
+                                        helper.throwHtmlError(err, res);
+                                        return;
+                                    }
+                                    if (result.affectedRows > 0) {
+                                        res.json({ status: "1", message: messages.favoriteAdd });
+                                    } else {
+                                        res.json({ status: "0", message: messages.fail });
+                                    }
+                                }
+                            );
+                        }
+                    }
+                );
+            });
+        }, "1");
+    });
+
+    app.post('/api/app/favorite_list', (req, res) => {
+        helper.dlog(req.body);
+        var reqObj = req.body;
+
+        checkAccessToken(req.headers, res, (userObj) => {
+            db.query(
+                `SELECT 
+                    fd.favorite_id,pd.product_id, pd.category_id, 
+                    pd.brand_id, pd.type_id, pd.name, pd.details, 
+                    pd.unit_name, pd.unit_value, pd.price, 
+                    pd.status, pd.created_date, pd.updated_date,  
+                    cd.category_name, IFNULL(bd.brand_name, '') AS brand_name, 
+                    td.type_name, IFNULL(od.price, pd.price) AS offer_price, 
+                    IFNULL(od.start_date, '') AS start_date, 
+                    IFNULL(od.end_date, '') AS end_date, 
+                    (CASE WHEN od.offer_id IS NOT NULL THEN 1 ELSE 0 END) AS is_offer_active,
+                    1 AS is_favorite 
+                FROM favorite_detail AS fd
+                INNER JOIN product_details AS pd ON pd.product_id = fd.product_id AND rd.status = 1
+                INNER JOIN category_details AS cd ON pd.category_id = cd.category_id
+                LEFT JOIN brand_detail AS bd ON pd.brand_id = bd.brand_id
+                LEFT JOIN offer_detail AS od 
+                    ON pd.product_id = od.product_id 
+                    AND od.status = 1 
+                    AND od.start_date <= NOW() 
+                    AND od.end_date >= NOW()
+                INNER JOIN type_details AS td ON pd.type_id = td.type_id
+                WHERE fd.user_id = ? AND fd.status = 1`,
+                [userObj.user_id],
+                (err, result) => {
+                    if (err) {
+                        helper.throwHtmlError(err, res);
+                        return;
+                    }
+                    res.json({ status: "1", payload: result, message: messages.success });
+                }
+            );
+        }, "1");
+    });
+
+    app.post('/api/app/explore_category_list', (req, res) => {
+        helper.dlog(req.body);
+        var reqObj = req.body;
+
+        checkAccessToken(req.headers, res, (userObj) => {
+            db.query(
+                `SELECT category_id, category_name, image, colors 
+                FROM category_details WHERE status = 1`,[],
+                (err, result) => {
+                    if (err) {
+                        helper.throwHtmlError(err, res);
+                        return;
+                    }
+                    res.json({ status: "1", payload: result, message: messages.success });
+                }
+            );
+        }, "1");
+    });
+
+    app.post('/api/app/explore_category_item_list', (req, res) => {
+        helper.dlog(req.body);
+        var reqObj = req.body;
+
+        checkAccessToken(req.headers, res, (userObj) => {
+            helper.checkParameterValid(res, reqObj, ["category_id"],() =>{
+                db.query(
+                    `SELECT 
+                        pd.product_id, pd.category_id, 
+                        pd.brand_id, pd.type_id, pd.name, pd.details, 
+                        pd.unit_name, pd.unit_value, pd.price, 
+                        pd.status, pd.created_date, pd.updated_date,  
+                        cd.category_name, IFNULL(bd.brand_name, '') AS brand_name, 
+                        td.type_name, IFNULL(od.price, pd.price) AS offer_price, 
+                        IFNULL(od.start_date, '') AS start_date, 
+                        IFNULL(od.end_date, '') AS end_date, 
+                        (CASE WHEN od.offer_id IS NOT NULL THEN 1 ELSE 0 END) AS is_offer_active,
+                        (CASE WHEN fd.favorite_id IS NOT NULL THEN 1 ELSE 0 END) AS is_favorite,
+                    FROM product_details AS pd
+                    LEFT JOIN favorite_detail  AS fd ON pd.product_id = fd.product_id AND fd.status = 1
+                    INNER JOIN category_details AS cd ON pd.category_id = cd.category_id AND pd.status = 1
+                    LEFT JOIN brand_detail AS bd ON pd.brand_id = bd.brand_id
+                    LEFT JOIN offer_detail AS od 
+                        ON pd.product_id = od.product_id 
+                        AND od.status = 1 
+                        AND od.start_date <= NOW() 
+                        AND od.end_date >= NOW()
+                    INNER JOIN type_details AS td ON pd.type_id = td.type_id
+                    WHERE cd.category_id = ? AND cd.status = 1`,
+                    [userObj.category],
+                    (err, result) => {
+                        if (err) {
+                            helper.throwHtmlError(err, res);
+                            return;
+                        }
+                        res.json({ status: "1", payload: result, message: messages.success });
+                    }
+                );
+            })
+        }, "1");
+    });
 }
 
