@@ -1353,6 +1353,40 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
         }, "1");
     });
 
+    app.post('/api/app/payment_detail', (req, res) => {
+        checkAccessToken(req.headers, res, (userObj) => {
+            const sql = `
+                SELECT 
+                    SUM((c.quantity * 
+                        (CASE 
+                            WHEN od.price IS NOT NULL THEN od.price 
+                            ELSE pd.price 
+                         END)
+                    )) AS grandTotal
+                FROM cart_details AS c
+                INNER JOIN product_details AS pd 
+                    ON c.product_id = pd.product_id AND pd.status = 1
+                LEFT JOIN offer_detail AS od 
+                    ON pd.product_id = od.product_id 
+                    AND od.status = 1 
+                    AND od.start_date <= NOW() 
+                    AND od.end_date >= NOW()
+                WHERE c.user_id = ?
+            `;
+            
+            db.query(sql, [userObj.user_id], (err, results) => {
+                if (err) {
+                    helper.throwHtmlError(err, res);
+                    return;
+                }
+                const grandTotal = results[0].grandTotal || 0;
+                // Now use grandTotal for payment processing
+                res.json({ status: "1", total: grandTotal, message: "Payment processed" });
+            });
+        }, "1");
+    });
+    
+
     // app.post('/api/admin/about_update', (req, res) => {
     //     helper.dlog(req.body);
     //     var reqObj = req.body;

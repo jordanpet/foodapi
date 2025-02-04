@@ -72,7 +72,11 @@ const messages = {
   offerDelete: "Offer deleted successfully",
   offerExist: "Offer already exists",
   favoriteAdd: "Favorite added successfully",
-  favoriteRemove: "Favorite Remove successfull"
+  favoriteRemove: "Favorite Remove successfull",
+  invalidItem: "Invalid product item",
+  addItem: "Item added to cart successfully",
+  updateItem: "Item updated in cart successfully",
+  removeItem: "Item removed from cart successfully",
 
 }; 
 module.exports =  messages;

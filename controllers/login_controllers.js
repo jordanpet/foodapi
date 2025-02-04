@@ -7,6 +7,7 @@ const moment = require('moment-timezone');
 var imageServerPath = "./public/img/"
 //app.use(express.json());
 var messages = require('../utils/messages');
+const helpers = require('./../helpers/helpers');
 
 //HELPER FUNCTIONS
 function getUserData(user_id, callback) {
@@ -127,14 +128,14 @@ function checkAccessToken(headerObj, res, callback, require_type = "") {
         )
     })
 }
-
+const image_base_url = helper.ImagePath();
 
 function getProductDetail(res, product_id) {
     // First Query: Get Product Details
     const productDetailsQuery = `
         SELECT 
             pd.product_id, pd.category_id, pd.brand_id, 
-            pd.type_id, pd.name, pd.details, pd.unit_name, 
+            pd.type_id, pd.product_name, pd.details, pd.unit_name, 
             pd.unit_value, pd.price, pd.status, pd.created_date, 
             pd.updated_date, cd.category_name, 
             (CASE WHEN fd.favorite_id IS NOT NULL THEN 1 ELSE 0 END) AS is_favorite,
@@ -226,7 +227,7 @@ function getProductDetail(res, product_id) {
 
 //END-POINT
 module.exports.controllers = (app, io, user_socket_connect_list) => {
-
+    const image_base_url = helper.ImagePath();
     //SIGN-UP
     app.post('/api/sign_up', (req, res) => {
         helper.dlog(req.body); // Log request for debugging
@@ -813,15 +814,15 @@ WHERE pd.category_id = ?;
                     db.query(`
                     SELECT 
                         type_id, type_name, (CASE WHEN image != '' THEN CONCAT('"+image_base_url+"','',image)ELSE '' END)
-                        AS image, color FROM type_details WHERE status = ?;`, 
+                        AS image, color FROM type_details WHERE status = ?;`,
                         ["1"], (err, typeResult) => {
-                        if (err) {
-                            helper.throwHtmlError(err, res);
-                            return;
-                        }
+                            if (err) {
+                                helper.throwHtmlError(err, res);
+                                return;
+                            }
 
-                        // Fourth query - Fetch latest 4 products
-                        db.query(`
+                            // Fourth query - Fetch latest 4 products
+                            db.query(`
                         SELECT 
                             pd.product_id, pd.category_id, pd.brand_id, pd.type_id, 
                             pd.name, pd.details, pd.unit_name, pd.unit_value, pd.price, 
@@ -833,24 +834,24 @@ WHERE pd.category_id = ?;
                         INNER JOIN type_details AS td ON pd.type_id = td.type_id AND td.status = 1
                         ORDER BY pd.product_id DESC LIMIT 4;
                     `, (err, latestProducts) => {
-                            if (err) {
-                                helper.throwHtmlError(err, res);
-                                return;
-                            }
+                                if (err) {
+                                    helper.throwHtmlError(err, res);
+                                    return;
+                                }
 
-                            // Send the response after all queries complete
-                            res.json({
-                                status: "1",
-                                payload: {
-                                    offer_list: offerResult,
-                                    best_sell_list: bestSellResult,
-                                    type_list: typeResult,
-                                    list: latestProducts
-                                },
-                                message: messages.success
+                                // Send the response after all queries complete
+                                res.json({
+                                    status: "1",
+                                    payload: {
+                                        offer_list: offerResult,
+                                        best_sell_list: bestSellResult,
+                                        type_list: typeResult,
+                                        list: latestProducts
+                                    },
+                                    message: messages.success
+                                });
                             });
                         });
-                    });
                 });
             });
         });
@@ -968,7 +969,7 @@ WHERE pd.category_id = ?;
         checkAccessToken(req.headers, res, (userObj) => {
             db.query(
                 `SELECT category_id, category_name, image, colors 
-                FROM category_details WHERE status = 1`,[],
+                FROM category_details WHERE status = 1`, [],
                 (err, result) => {
                     if (err) {
                         helper.throwHtmlError(err, res);
@@ -985,7 +986,7 @@ WHERE pd.category_id = ?;
         var reqObj = req.body;
 
         checkAccessToken(req.headers, res, (userObj) => {
-            helper.checkParameterValid(res, reqObj, ["category_id"],() =>{
+            helper.checkParameterValid(res, reqObj, ["category_id"], () => {
                 db.query(
                     `SELECT 
                         pd.product_id, pd.category_id, 
@@ -1021,5 +1022,150 @@ WHERE pd.category_id = ?;
             })
         }, "1");
     });
-}
 
+    app.post('/api/app/add_to_cart', (req, res) => {
+        helper.dlog(req.body);
+        var reqObj = req.body;
+
+        checkAccessToken(req.headers, res, (userObj) => {
+            helper.checkParameterValid(res, reqObj, ["product_id", "quantity"], () => {
+                db.query(
+                    `SELECT product_id FROM product_details WHERE product_id = ? AND status = 1`,
+                    [reqObj.product_id], (err, result) => {
+                        if (err) {
+                            helpers.throwHtmlError(err, res);
+                            return;
+                        }
+                        if (result.length > 0) {
+                            db.query(
+                                `INSERT INTO cart_details (user_id, product_id, quantity) VALUES (?,?,?)`,
+                                [userObj.user_id, reqObj.product_id, reqObj.quantity],
+                                (err, result) => {
+                                    if (err) {
+                                        helpers.throwHtmlError(err, res);
+                                        return;
+                                    }
+                                    if (result) {
+                                        res.json({ status: "1", message: messages.addItem });
+                                    } else {
+                                        res.json({ status: "0", message: messages.fail });
+                                    }
+                                });
+                        } else {
+                            res.json({ status: "0", message: messages.invalidItem });
+                        }
+                    })
+            })
+        }, "1")
+    })
+
+    app.post('/api/app/update_cart', (req, res) => {
+        helper.dlog(req.body);
+        var reqObj = req.body;
+
+        checkAccessToken(req.headers, res, (userObj) => {
+            helper.checkParameterValid(res, reqObj, ["cart_id", "product_id", "quantity"], () => {
+                var status = "1"
+                if (reqObj.new_quantity === "0") {
+                    status = "2"
+                }
+                db.query(
+                    `UPDATE cart_details 
+                     SET quantity = ?, status = ? 
+                     WHERE cart_id = ? AND product_id = ? AND user_id = ?`,
+                    [reqObj.quantity, status, reqObj.cart_id, reqObj.product_id,
+                    userObj.user_id], (err, result) => {
+                        if (err) {
+                            helpers.throwHtmlError(err, res);
+                            return;
+                        }
+                        if (result.affectedRows > 0) {
+                            res.json({ status: "1", message: messages.updateItem });
+                        } else {
+                            res.json({ status: "0", message: messages.invalidItem });
+                        }
+                    }
+                )
+            })
+        }, "1")
+    })
+
+    app.post('/api/app/remove_cart', (req, res) => {
+        helper.dlog(req.body);
+        var reqObj = req.body;
+
+        checkAccessToken(req.headers, res, (userObj) => {
+            helper.checkParameterValid(res, reqObj, ["cart_id", "product_id"], () => {
+
+                db.query(
+                    `DELETE FROM cart_details 
+                     WHERE cart_id = ? AND product_id = ? AND user_id = ?`,
+                    [reqObj.cart_id, reqObj.product_id, userObj.user_id], (err, result) => {
+                        if (err) {
+                            helpers.throwHtmlError(err, res);
+                            return;
+                        }
+                        if (result.affectedRows > 0) {
+                            res.json({ status: "1", message: messages.removeItem });
+                        } else {
+                            res.json({ status: "0", message: messages.invalidItem });
+                        }
+                    })
+            }, "1")
+        })
+    })
+
+    app.post('/api/app/cart_list', (req, res) => {
+        helper.dlog(req.body);
+        var reqObj = req.body;
+        const image_base_url = helper.ImagePath();
+        
+        checkAccessToken(req.headers, res, (userObj) => {
+            db.query(`
+                SELECT 
+    pd.product_id,
+    pd.product_name,
+    cd.category_name,
+    bd.brand_name,
+    td.type_name,
+    pd.price,
+    od.price AS offer_price,
+    2 AS quantity, -- Static quantity, replace with actual user input if available
+    (2 * od.price) AS total_price, -- Adjust calculation dynamically
+    pd.unit_name,
+    pd.unit_value,
+    (CASE WHEN imd.image != '' 
+        THEN CONCAT(?, imd.image) 
+        ELSE '' 
+    END) AS image,  
+    (CASE WHEN fd.favorite_id IS NOT NULL THEN 1 ELSE 0 END) AS is_favorite
+FROM offer_detail AS od
+INNER JOIN product_details AS pd ON pd.product_id = od.product_id AND pd.status = 1
+INNER JOIN image_detail AS imd ON pd.product_id = imd.product_id AND imd.status = 1
+INNER JOIN category_details AS cd ON cd.category_id = pd.category_id AND cd.status = 1
+INNER JOIN brand_detail AS bd ON bd.brand_id = pd.brand_id AND bd.status = 1
+LEFT JOIN favorite_detail AS fd ON pd.product_id = fd.product_id AND fd.status = 1
+INNER JOIN type_details AS td ON pd.type_id = td.type_id AND td.status = 1
+WHERE od.status = 1 
+  AND od.start_date <= NOW() 
+  AND od.end_date >= NOW();
+
+            `, [image_base_url], (err, result) => {
+                if (err) {
+                    helper.throwHtmlError(err, res);
+                    return;
+                }
+                
+                let total = result.reduce((sum, item) => sum + parseFloat(item.total_price), 0);
+                
+                res.json({
+                    status: "1",
+                    payload: result,
+                    total: total,
+                    message: "Successful"
+                });
+            });
+        }, "1");
+    });
+    
+}
