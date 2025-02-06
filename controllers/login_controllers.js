@@ -8,6 +8,8 @@ var imageServerPath = "./public/img/"
 //app.use(express.json());
 var messages = require('../utils/messages');
 const helpers = require('./../helpers/helpers');
+const express = require('express');
+const path = require('path');
 
 //HELPER FUNCTIONS
 function getUserData(user_id, callback) {
@@ -128,7 +130,6 @@ function checkAccessToken(headerObj, res, callback, require_type = "") {
         )
     })
 }
-const image_base_url = helper.ImagePath();
 
 function getProductDetail(res, product_id) {
     // First Query: Get Product Details
@@ -223,7 +224,6 @@ function getProductDetail(res, product_id) {
         });
     });
 }
-
 
 //END-POINT
 module.exports.controllers = (app, io, user_socket_connect_list) => {
@@ -758,29 +758,30 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
     app.post('/api/app/home', (req, res) => {
         helper.dlog(req.body);
         var reqObj = req.body;
+        const image_base_url = helper.ImagePath();
 
         checkAccessToken(req.headers, res, () => {
             // First query - Fetch active offers
             db.query(`
-               SELECT 
-    od.price AS offer_price, od.start_date, od.end_date,pd.product_id, 
-    pd.category_id, pd.brand_id, pd.type_id, pd.details, pd.unit_name, 
-    pd.unit_value, pd.price, 
-    (CASE WHEN imd.image != '' 
-        THEN CONCAT('", image_base_url ,"', imd.image) 
-        ELSE '' 
-    END) AS image,  
-    cd.category_name, 
-    td.type_name, 
-    (CASE WHEN fd.favorite_id IS NOT NULL THEN 1 ELSE 0 END) AS is_favorite
-FROM offer_detail AS od
-INNER JOIN product_details AS pd ON pd.product_id = od.product_id AND pd.status = 1
-INNER JOIN image_detail AS imd ON pd.product_id = imd.product_id AND imd.status = 1
-INNER JOIN category_details AS cd ON cd.category_id = pd.category_id AND cd.status = 1
-LEFT JOIN favorite_detail AS fd ON pd.product_id = fd.product_id AND fd.status = 1
-INNER JOIN type_details AS td ON pd.type_id = td.type_id AND td.status = 1
-WHERE od.status = 1 AND od.start_date <= NOW() AND od.end_date >= NOW();
-`, (err, offerResult) => {
+                SELECT 
+                    od.price AS offer_price, od.start_date, od.end_date, pd.product_id, 
+                    pd.category_id, pd.brand_id, pd.type_id, pd.details, pd.unit_name, 
+                    pd.unit_value, pd.price, 
+                    (CASE WHEN imd.image != '' 
+                        THEN CONCAT(?, imd.image) 
+                        ELSE '' 
+                    END) AS image,  
+                    cd.category_name, 
+                    td.type_name, 
+                    (CASE WHEN fd.favorite_id IS NOT NULL THEN 1 ELSE 0 END) AS is_favorite
+                FROM offer_detail AS od
+                INNER JOIN product_details AS pd ON pd.product_id = od.product_id AND pd.status = 1
+                INNER JOIN image_detail AS imd ON pd.product_id = imd.product_id AND imd.status = 1
+                INNER JOIN category_details AS cd ON cd.category_id = pd.category_id AND cd.status = 1
+                LEFT JOIN favorite_detail AS fd ON pd.product_id = fd.product_id AND fd.status = 1
+                INNER JOIN type_details AS td ON pd.type_id = td.type_id AND td.status = 1
+                WHERE od.status = 1 AND od.start_date <= NOW() AND od.end_date >= NOW();
+            `, [image_base_url], (err, offerResult) => {
                 if (err) {
                     helper.throwHtmlError(err, res);
                     return;
@@ -788,23 +789,23 @@ WHERE od.status = 1 AND od.start_date <= NOW() AND od.end_date >= NOW();
 
                 // Second query - Fetch best-selling products
                 db.query(`
-               SELECT 
-    pd.product_id, pd.category_id, pd.brand_id, pd.type_id, pd.name, 
-    pd.details, pd.unit_name,  pd.unit_value, pd.price, 
-    (CASE WHEN imd.image != '' 
-        THEN CONCAT('"+ image_base_url+"','',imd.image) 
-        ELSE '' 
-    END) AS image, 
-    cd.category_name, 
-    td.type_name,
-    (CASE WHEN fd.favorite_id IS NOT NULL THEN 1 ELSE 0 END) AS is_favorite 
-FROM product_details AS pd
-LEFT JOIN favorite_detail AS fd ON pd.product_id = fd.product_id AND fd.status = 1
-INNER JOIN image_detail AS imd ON pd.product_id = imd.product_id AND imd.status = 1
-INNER JOIN category_details AS cd ON cd.category_id = pd.category_id AND cd.status = 1
-INNER JOIN type_details AS td ON pd.type_id = td.type_id AND td.status = 1
-WHERE pd.category_id = ?;
-        `, ["1"], (err, bestSellResult) => {
+                    SELECT 
+                        pd.product_id, pd.category_id, pd.brand_id, pd.type_id, pd.product_name, 
+                        pd.details, pd.unit_name, pd.unit_value, pd.price, 
+                        (CASE WHEN imd.image != '' 
+                            THEN CONCAT(?, imd.image) 
+                            ELSE '' 
+                        END) AS image, 
+                        cd.category_name, 
+                        td.type_name,
+                        (CASE WHEN fd.favorite_id IS NOT NULL THEN 1 ELSE 0 END) AS is_favorite 
+                    FROM product_details AS pd
+                    LEFT JOIN favorite_detail AS fd ON pd.product_id = fd.product_id AND fd.status = 1
+                    INNER JOIN image_detail AS imd ON pd.product_id = imd.product_id AND imd.status = 1
+                    INNER JOIN category_details AS cd ON cd.category_id = pd.category_id AND cd.status = 1
+                    INNER JOIN type_details AS td ON pd.type_id = td.type_id AND td.status = 1
+                    WHERE pd.category_id = ?;
+                `, [image_base_url, "1"], (err, bestSellResult) => {
                     if (err) {
                         helper.throwHtmlError(err, res);
                         return;
@@ -812,46 +813,56 @@ WHERE pd.category_id = ?;
 
                     // Third query - Fetch type details
                     db.query(`
-                    SELECT 
-                        type_id, type_name, (CASE WHEN image != '' THEN CONCAT('"+image_base_url+"','',image)ELSE '' END)
-                        AS image, color FROM type_details WHERE status = ?;`,
-                        ["1"], (err, typeResult) => {
+                        SELECT 
+                            type_id, type_name, 
+                            (CASE WHEN image != '' 
+                                THEN CONCAT(?, image) 
+                                ELSE '' 
+                            END) AS image, 
+                            color 
+                        FROM type_details WHERE status = ?;
+                    `, [image_base_url, "1"], (err, typeResult) => {
+                        if (err) {
+                            helper.throwHtmlError(err, res);
+                            return;
+                        }
+
+                        // Fourth query - Fetch latest 4 products
+                        db.query(`
+                            SELECT 
+                                pd.product_id, pd.category_id, pd.brand_id, pd.type_id, 
+                                pd.product_name, pd.details, pd.unit_name, pd.unit_value, pd.price, 
+                                (CASE WHEN imd.image != '' 
+                                    THEN CONCAT(?, imd.image) 
+                                    ELSE '' 
+                                END) AS image, 
+                                cd.category_name, 
+                                td.type_name 
+                            FROM product_details AS pd
+                            LEFT JOIN favorite_detail AS fd ON pd.product_id = fd.product_id AND fd.status = 1
+                            INNER JOIN image_detail AS imd ON pd.product_id = imd.product_id AND imd.status = 1
+                            INNER JOIN category_details AS cd ON cd.category_id = pd.category_id AND cd.status = 1
+                            INNER JOIN type_details AS td ON pd.type_id = td.type_id AND td.status = 1
+                            ORDER BY pd.product_id DESC LIMIT 4;
+                        `, [image_base_url], (err, latestProducts) => {
                             if (err) {
                                 helper.throwHtmlError(err, res);
                                 return;
                             }
 
-                            // Fourth query - Fetch latest 4 products
-                            db.query(`
-                        SELECT 
-                            pd.product_id, pd.category_id, pd.brand_id, pd.type_id, 
-                            pd.name, pd.details, pd.unit_name, pd.unit_value, pd.price, 
-                        (CASE WHEN imd.image != '' THEN CONCAT('"+image_base_url +"','', imd.image)ELSE ''END) 
-                        AS image, cd.category_name, td.type_name FROM product_details AS pd
-                        LEFT JOIN favorite_detail AS fd ON pd.product_id = fd.product_id AND  fd.status = 1
-                        INNER JOIN image_detail AS imd ON pd.product_id = imd.product_id AND imd.status = 1
-                        INNER JOIN category_details AS cd ON cd.category_id = pd.category_id AND cd.status = 1
-                        INNER JOIN type_details AS td ON pd.type_id = td.type_id AND td.status = 1
-                        ORDER BY pd.product_id DESC LIMIT 4;
-                    `, (err, latestProducts) => {
-                                if (err) {
-                                    helper.throwHtmlError(err, res);
-                                    return;
-                                }
-
-                                // Send the response after all queries complete
-                                res.json({
-                                    status: "1",
-                                    payload: {
-                                        offer_list: offerResult,
-                                        best_sell_list: bestSellResult,
-                                        type_list: typeResult,
-                                        list: latestProducts
-                                    },
-                                    message: messages.success
-                                });
+                            // Send the response after all queries complete
+                            res.json({
+                                status: "1",
+                                payload: {
+                                    offer_list: offerResult,
+                                    best_sell_list: bestSellResult,
+                                    type_list: typeResult,
+                                    list: latestProducts
+                                },
+                                message: messages.success
                             });
                         });
+                    });
                 });
             });
         });
@@ -1054,7 +1065,8 @@ WHERE pd.category_id = ?;
                         } else {
                             res.json({ status: "0", message: messages.invalidItem });
                         }
-                    })
+                    }
+                )
             })
         }, "1")
     })
@@ -1119,53 +1131,162 @@ WHERE pd.category_id = ?;
         helper.dlog(req.body);
         var reqObj = req.body;
         const image_base_url = helper.ImagePath();
-        
+
         checkAccessToken(req.headers, res, (userObj) => {
             db.query(`
                 SELECT 
-    pd.product_id,
-    pd.product_name,
-    cd.category_name,
-    bd.brand_name,
-    td.type_name,
-    pd.price,
-    od.price AS offer_price,
-    2 AS quantity, -- Static quantity, replace with actual user input if available
-    (2 * od.price) AS total_price, -- Adjust calculation dynamically
-    pd.unit_name,
-    pd.unit_value,
-    (CASE WHEN imd.image != '' 
-        THEN CONCAT(?, imd.image) 
-        ELSE '' 
-    END) AS image,  
-    (CASE WHEN fd.favorite_id IS NOT NULL THEN 1 ELSE 0 END) AS is_favorite
-FROM offer_detail AS od
-INNER JOIN product_details AS pd ON pd.product_id = od.product_id AND pd.status = 1
-INNER JOIN image_detail AS imd ON pd.product_id = imd.product_id AND imd.status = 1
-INNER JOIN category_details AS cd ON cd.category_id = pd.category_id AND cd.status = 1
-INNER JOIN brand_detail AS bd ON bd.brand_id = pd.brand_id AND bd.status = 1
-LEFT JOIN favorite_detail AS fd ON pd.product_id = fd.product_id AND fd.status = 1
-INNER JOIN type_details AS td ON pd.type_id = td.type_id AND td.status = 1
-WHERE od.status = 1 
-  AND od.start_date <= NOW() 
-  AND od.end_date >= NOW();
+        pd.product_id,
+        pd.product_name,
+        cd.category_name,
+        bd.brand_name,
+        td.type_name,
+        pd.price,
+        od.price AS offer_price,
+        2 AS quantity, -- Static quantity, replace with actual user input if available
+        (2 * od.price) AS total_price, -- Adjust calculation dynamically
+        pd.unit_name,
+        pd.unit_value,
+        (CASE WHEN imd.image != '' 
+            THEN CONCAT(?, imd.image) 
+            ELSE '' 
+        END) AS image,  
+        (CASE WHEN fd.favorite_id IS NOT NULL THEN 1 ELSE 0 END) AS is_favorite
+    FROM offer_detail AS od
+    INNER JOIN product_details AS pd ON pd.product_id = od.product_id AND pd.status = 1
+    INNER JOIN image_detail AS imd ON pd.product_id = imd.product_id AND imd.status = 1
+    INNER JOIN category_details AS cd ON cd.category_id = pd.category_id AND cd.status = 1
+    INNER JOIN brand_detail AS bd ON bd.brand_id = pd.brand_id AND bd.status = 1
+    LEFT JOIN favorite_detail AS fd ON pd.product_id = fd.product_id AND fd.status = 1
+    INNER JOIN type_details AS td ON pd.type_id = td.type_id AND td.status = 1
+    WHERE od.status = 1 
+    AND od.start_date <= NOW() 
+    AND od.end_date >= NOW();`,
+                [image_base_url], (err, result) => {
+                    if (err) {
+                        helper.throwHtmlError(err, res);
+                        return;
+                    }
+                    let total = result.reduce((sum, item) =>
+                        sum + parseFloat(item.total_price), 0);
 
-            `, [image_base_url], (err, result) => {
-                if (err) {
-                    helper.throwHtmlError(err, res);
-                    return;
-                }
-                
-                let total = result.reduce((sum, item) => sum + parseFloat(item.total_price), 0);
-                
-                res.json({
-                    status: "1",
-                    payload: result,
-                    total: total,
-                    message: "Successful"
+                    res.json({
+                        status: "1",
+                        payload: result,
+                        total: total,
+                        message: messages.success
+                    });
                 });
-            });
+        }, "1");
+    });
+
+    app.post('/api/app/add_delivery_address', (req, res) => {
+        helper.dlog(req.body);
+        var reqObj = req.body;
+    
+        checkAccessToken(req.headers, res, (userObj) => {
+            const userId = userObj.user_id || userObj.id; 
+    
+            helper.checkParameterValid(res, reqObj, ["name", "phone", "address",
+                "city", "state", "type_name", "postal_code"], () => {
+                    db.query(
+                        `INSERT INTO address_detail (name, user_id, phone, address, city, state, 
+                        type_name, postal_code) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                        [reqObj.name, userId, reqObj.phone, reqObj.address, reqObj.city,
+                        reqObj.state, reqObj.type_name, reqObj.postal_code], (err, result) => {
+                            if (err) {
+                                helpers.throwHtmlError(err, res);
+                                return;
+                            }
+                            if (result.affectedRows > 0) {
+                                res.json({ status: "1", message: messages.addAddress });
+                            } else {
+                                res.json({ status: "0", message: messages.fail });
+                            }
+                        }
+                    )
+                })
         }, "1");
     });
     
+
+    app.post('/api/app/update_delivery_address', (req, res) => {
+            helper.dlog(req.body);
+            var reqObj = req.body;
+
+            checkAccessToken(req.headers, res, (userObj) => {
+                helper.checkParameterValid(res, reqObj, ["address_id", "name","user_id", "phone", "address",
+                    "city", "state", "type_name", "postal_code"], () => {
+                        db.query(
+                            `UPDATE address_detail SET name = ?, user_id = ?, phone = ?, 
+                        address = ?, city = ?, state = ?,type_name = ?, postal_code = ?, 
+                        updated_date = NOW() WHERE address_id = ? AND user_id = ? AND status = 1`,
+                            [ reqObj.name,reqObj.user_id, reqObj.phone, reqObj.address,reqObj.city,
+                            reqObj.state, reqObj.type_name,reqObj.postal_code,
+                            reqObj.address_id,reqObj.user_id], (err, result) => {
+                                if (err) {
+                                    helpers.throwHtmlError(err, res);
+                                    return;
+                                }
+                                if (result.affectedRows > 0) {
+                                    res.json({ status: "1", message: messages.updateAddress });
+
+                                } else {
+                                    res.json({ status: "0", message: messages.fail });
+                                }
+                            }
+                        )
+                    })
+            }, "1")
+    })
+
+    app.post('/api/app/mark_default_delivery_address', (req, res) => {
+        helper.dlog(req.body);
+        var reqObj = req.body;
+
+        checkAccessToken(req.headers, res, (userObj) => {
+            helper.checkParameterValid(res, reqObj, ["address_id", "user_id"], () => {
+                db.query(
+                    `UPDATE address_detail SET is_default = (CASE WHEN address_id = ? THEN 1 ELSE 0 END), 
+                    updated_date = NOW() WHERE user_id = ? AND status = 1`,
+                    [reqObj.address_id, reqObj.user_id], (err, result) => {
+                        if (err) {
+                            helpers.throwHtmlError(err, res);
+                            return;
+                        }
+                        if (result.affectedRows > 0) {
+                            res.json({ status: "1", message: messages.success });
+
+                        } else {
+                            res.json({ status: "0", message: messages.fail });
+                        }
+                    }
+                )
+            })
+        }, "1")
+    })
+
+    app.post('/api/app/delivery_address', (req, res) => {
+        helper.dlog(req.body);
+        var reqObj = req.body;
+
+        const { otherData } = req.body;
+
+        checkAccessToken(req.headers, res, (userObj) => {
+
+            const userId = userObj.user_id || userObj.id;
+
+            db.query(
+                `SELECT address_id, name, user_id, phone, address, city, 
+                    state, type_name, postal_code, is_default FROM address_detail
+                    WHERE user_id = ? AND status = 1`,
+                    [userId], (err, result) => {
+                    if (err) {
+                        helpers.throwHtmlError(err, res);
+                        return;
+                    }
+                    res.json({ status: "1", payload: result, message: messages.success });
+                }
+            )
+        }, "1")
+    })
 }

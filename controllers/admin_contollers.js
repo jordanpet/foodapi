@@ -8,6 +8,8 @@ var imageServerPath = "./public/img/"
 //app.use(express.json());
 var messages = require('../utils/messages');
 require('dotenv').config();
+const express = require('express');
+const path = require('path');
 
 //HELPER FUNCTIONS
 function getUserData(user_id, callback) {

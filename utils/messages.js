@@ -77,6 +77,10 @@ const messages = {
   addItem: "Item added to cart successfully",
   updateItem: "Item updated in cart successfully",
   removeItem: "Item removed from cart successfully",
+  addAddress: "Address added successfully",
+  updateAddress: "Address updated successfully",
+  deleteAddress: "Address deleted successfully",
+  addressRemove: "Address successfully removed",
 
 }; 
 module.exports =  messages;
