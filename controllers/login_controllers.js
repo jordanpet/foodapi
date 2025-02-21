@@ -1182,10 +1182,10 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
     app.post('/api/app/add_delivery_address', (req, res) => {
         helper.dlog(req.body);
         var reqObj = req.body;
-    
+
         checkAccessToken(req.headers, res, (userObj) => {
-            const userId = userObj.user_id || userObj.id; 
-    
+            const userId = userObj.user_id || userObj.id;
+
             helper.checkParameterValid(res, reqObj, ["name", "phone", "address",
                 "city", "state", "type_name", "postal_code"], () => {
                     db.query(
@@ -1207,36 +1207,35 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
                 })
         }, "1");
     });
-    
 
     app.post('/api/app/update_delivery_address', (req, res) => {
-            helper.dlog(req.body);
-            var reqObj = req.body;
+        helper.dlog(req.body);
+        var reqObj = req.body;
 
-            checkAccessToken(req.headers, res, (userObj) => {
-                helper.checkParameterValid(res, reqObj, ["address_id", "name","user_id", "phone", "address",
-                    "city", "state", "type_name", "postal_code"], () => {
-                        db.query(
-                            `UPDATE address_detail SET name = ?, user_id = ?, phone = ?, 
+        checkAccessToken(req.headers, res, (userObj) => {
+            helper.checkParameterValid(res, reqObj, ["address_id", "name", "user_id", "phone", "address",
+                "city", "state", "type_name", "postal_code"], () => {
+                    db.query(
+                        `UPDATE address_detail SET name = ?, user_id = ?, phone = ?, 
                         address = ?, city = ?, state = ?,type_name = ?, postal_code = ?, 
                         updated_date = NOW() WHERE address_id = ? AND user_id = ? AND status = 1`,
-                            [ reqObj.name,reqObj.user_id, reqObj.phone, reqObj.address,reqObj.city,
-                            reqObj.state, reqObj.type_name,reqObj.postal_code,
-                            reqObj.address_id,reqObj.user_id], (err, result) => {
-                                if (err) {
-                                    helpers.throwHtmlError(err, res);
-                                    return;
-                                }
-                                if (result.affectedRows > 0) {
-                                    res.json({ status: "1", message: messages.updateAddress });
-
-                                } else {
-                                    res.json({ status: "0", message: messages.fail });
-                                }
+                        [reqObj.name, reqObj.user_id, reqObj.phone, reqObj.address, reqObj.city,
+                        reqObj.state, reqObj.type_name, reqObj.postal_code,
+                        reqObj.address_id, reqObj.user_id], (err, result) => {
+                            if (err) {
+                                helpers.throwHtmlError(err, res);
+                                return;
                             }
-                        )
-                    })
-            }, "1")
+                            if (result.affectedRows > 0) {
+                                res.json({ status: "1", message: messages.updateAddress });
+
+                            } else {
+                                res.json({ status: "0", message: messages.fail });
+                            }
+                        }
+                    )
+                })
+        }, "1")
     })
 
     app.post('/api/app/mark_default_delivery_address', (req, res) => {
@@ -1279,12 +1278,33 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
                 `SELECT address_id, name, user_id, phone, address, city, 
                     state, type_name, postal_code, is_default FROM address_detail
                     WHERE user_id = ? AND status = 1`,
-                    [userId], (err, result) => {
+                [userId], (err, result) => {
                     if (err) {
                         helpers.throwHtmlError(err, res);
                         return;
                     }
                     res.json({ status: "1", payload: result, message: messages.success });
+                }
+            )
+        }, "1")
+    })
+
+    app.post('/api/app/promo_code_list', (req, res) => {
+        helper.dlog(req.body)
+        var reqObj = req.body
+
+        checkAccessToken(req.headers, res, (userObj) => {
+
+            db.query(`SELECT promo_code_id, code, offer_price, start_date,
+                         end_date, title, description, type, minimum_order_amount, 
+                         maximum_discount_amount, created_date, updated_date
+                         FROM promo_codes WHERE status = 1 ORDER BY promo_code_id DESC `,
+                [], (err, result) => {
+                    if (err) {
+                        helper.throwHtmlError(err, res);
+                        return;
+                    }
+                        res.json({ status: "1",payload: result, message: messages.success });
                 }
             )
         }, "1")

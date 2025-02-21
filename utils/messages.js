@@ -81,6 +81,11 @@ const messages = {
   updateAddress: "Address updated successfully",
   deleteAddress: "Address deleted successfully",
   addressRemove: "Address successfully removed",
+  addPromo: "Promo code added successfully",
+  updatePromo: "Promo code updated successfully",
+  deletePromo: "Promo code deleted successfully",
+  promoExist: "Promo code already exists",
+  promoCodeNotFound: "Promo code not found or already been deleted"
 
 }; 
 module.exports =  messages;

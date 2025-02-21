@@ -1119,7 +1119,6 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
                     WHERE zone_id = ? AND status = ?`,
                     ["2", reqObj.zone_id, "1"], (err, result) => {
                         if (err) {
-                            // Log and handle database errors
                             helper.throwHtmlError(err, res);
                             return;
                         }
@@ -1316,7 +1315,6 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
                         WHERE offer_id = ? AND status = ?` ,
                     ["2", reqObj.offer_id, "1"], (err, result) => {
                         if (err) {
-                            // Log and handle database errors
                             helper.throwHtmlError(err, res);
                             return;
                         }
@@ -1375,7 +1373,7 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
                     AND od.end_date >= NOW()
                 WHERE c.user_id = ?
             `;
-            
+
             db.query(sql, [userObj.user_id], (err, results) => {
                 if (err) {
                     helper.throwHtmlError(err, res);
@@ -1387,7 +1385,132 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
             });
         }, "1");
     });
-    
+
+    app.post('/api/admin/promo_code_add', (req, res) => {
+        helper.dlog(req.body)
+        var reqObj = req.body
+
+        checkAccessToken(req.headers, res, (userObj) => {
+            helper.checkParameterValid(res, reqObj, ["code", "offer_price", "start_date", "end_date",
+                "title", "description", "type", "minimum_order_amount", "maximum_discount_amount"], () => {
+                    db.query(`SELECT promo_code_id FROM promo_codes WHERE code = ? AND status = 1`,
+                        [reqObj.code], (err, results) => {
+                            if (err) {
+                                helper.throwHtmlError(err, res);
+                                return;
+                            }
+                            if (results.length > 0) {
+                                res.json({ status: "0", message: messages.promoExist });
+                            } else {
+                                db.query(`INSERT INTO promo_codes (code, offer_price, start_date, 
+                                    end_date, title, description, type, minimum_order_amount, 
+                                    maximum_discount_amount) VALUES (?,?,?,?,?,?,?,?,?)`,
+                                    [reqObj.code, reqObj.offer_price, reqObj.start_date, reqObj.end_date,
+                                    reqObj.title, reqObj.description, reqObj.type, reqObj.minimum_order_amount,
+                                    reqObj.maximum_discount_amount],
+                                    (err, result) => {
+                                        if (err) {
+                                            helper.throwHtmlError(err, res)
+                                            return
+                                        }
+                                        if (result) {
+                                            res.json({ status: "1", message: messages.addPromo });
+                                        } else {
+                                            res.json({ status: "0", message: messages.fail });
+                                        }
+                                    }
+                                )
+                            }
+                        }
+                    )
+                })
+        }, "1")
+    })
+
+    app.post('/api/admin/promo_code_update', (req, res) => {
+        helper.dlog(req.body)
+        var reqObj = req.body
+
+        checkAccessToken(req.headers, res, (userObj) => {
+            helper.checkParameterValid(res, reqObj, ["promo_code_id", "offer_price", 
+                "start_date", "end_date","title", "description", "type",
+                 "minimum_order_amount", "maximum_discount_amount"], () => {     
+                    db.query(
+                        `UPDATE promo_codes 
+                         SET offer_price = ?, start_date = ?, end_date = ?, 
+                             title = ?, description = ?, type = ?, 
+                             minimum_order_amount = ?,maximum_discount_amount = ?, 
+                             updated_date = NOW() WHERE promo_code_id = ? AND status = ?`,
+                        [
+                          reqObj.offer_price,reqObj.start_date,reqObj.end_date,
+                          reqObj.title,reqObj.description,reqObj.type,
+                          reqObj.minimum_order_amount,reqObj.maximum_discount_amount,
+                          reqObj.promo_code_id,  
+                          1                      
+                        ], (err, result) => {
+                            if (err) {
+                                helper.throwHtmlError(err, res);
+                                return;
+                            }
+                            
+                            if (result.affectedRows > 0) {
+                                res.json({ status: "1", message: messages.updatePromo });
+                            } else {
+                                res.json({ status: "0", message: messages.fail });
+                            }
+                        }
+                    )
+                })
+        }, "1")
+    })
+
+    app.post('/api/admin/promo_code_delete', (req, res) => {
+        helper.dlog(req.body)
+        var reqObj = req.body
+
+        checkAccessToken(req.headers, res, (userObj) => {
+
+            helper.checkParameterValid(res, reqObj, ["promo_code_id"], () => {
+
+                db.query(`UPDATE promo_codes SET status = ?, updated_date = NOW()
+                         WHERE promo_code_id = ? AND status = ?`,
+                    ["2",reqObj.promo_code_id, "1"], (err, result) => {
+                        if (err) {
+                            helper.throwHtmlError(err, res);
+                            return;
+                        }
+                        if (result.affectedRows > 0) {
+                            res.json({ status: "1", message: messages.deletePromo });
+                        } else {
+                            res.json({ status: "0", message: messages.promoCodeNotFound});
+                        }
+                    }
+                )
+            })
+        }, "1")
+    })
+
+    app.post('/api/admin/promo_code_list', (req, res) => {
+        helper.dlog(req.body)
+        var reqObj = req.body
+
+        checkAccessToken(req.headers, res, (userObj) => {
+
+            db.query(`SELECT promo_code_id, code, offer_price, start_date,
+                         end_date, title, description, type, minimum_order_amount, 
+                         maximum_discount_amount, created_date, updated_date
+                         FROM promo_codes WHERE end_date >= NOW() 
+                         AND status = 1 ORDER BY start_date DESC `,[], 
+                         (err, result) => {
+                    if (err) {
+                        helper.throwHtmlError(err, res);
+                        return;
+                    }
+                    res.json({ status: "1", payload: result.replace_null(), message: messages.success });
+                })
+        }, "1")
+    })
+
 
     // app.post('/api/admin/about_update', (req, res) => {
     //     helper.dlog(req.body);
