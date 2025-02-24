@@ -1304,9 +1304,94 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
                         helper.throwHtmlError(err, res);
                         return;
                     }
-                        res.json({ status: "1",payload: result, message: messages.success });
+                    res.json({ status: "1", payload: result, message: messages.success });
                 }
             )
         }, "1")
     })
+
+    app.post('/api/app/add_payment_method', (req, res) => {
+        helper.dlog(req.body);
+        const reqObj = req.body;
+    
+        checkAccessToken(req.headers, res, (userObj) => {
+            helper.checkParameterValid(res, reqObj, ["name", "card_number", "card_month", "card_year"], () => {
+                db.query(
+                    `SELECT pay_id FROM payment_method_detail 
+                     WHERE user_id = ? AND card_number = ? AND status = 1`,
+                    [userObj.user_id, reqObj.card_number],
+                    (err, sResult) => {
+                        if (err) {
+                            helper.throwHtmlError(err, res);
+                            return;
+                        }
+                        if (sResult.length > 0) {
+                            return res.json({ status: "0", message: messages.existPayment });
+                        }
+                        db.query(
+                            `INSERT INTO payment_method_detail (user_id, name, card_number, card_month, card_year)
+                             VALUES (?, ?, ?, ?, ?)`,
+                            [userObj.user_id, reqObj.name, reqObj.card_number, reqObj.card_month, reqObj.card_year],
+                            (err, result) => {
+                                if (err) {
+                                    helper.throwHtmlError(err, res);
+                                    return;
+                                }
+                                if (result) {
+                                    res.json({ status: "1", message: messages.addPayment });
+                                } else {
+                                    res.json({ status: "0", message: messages.fail });
+                                }
+                            }
+                        );
+                    }
+                );
+            });
+        }, "1");
+    });
+    
+    
+    app.post('/api/app/remove_payment_method', (req, res) => {
+        helpers.dlog(req.body);
+        var reqObj = req.body;
+
+        checkAccessToken(req.headers, res, (userObj) => {
+            helper.checkParameterValid(res, reqObj, ["pay_id"], () => {
+                db.query(
+                    `UPDATE payment_method_detail SET status = ? WHERE pay_id = ?
+                        AND user_id = ? and status = ?`,
+                        ["2", reqObj.pay_id, userObj.user_id, "1"], (err, result) => {
+                        if (err) {
+                            helpers.throwHtmlError(err, res);
+                            return;
+                        }
+                        if (result.affectedRows > 0) {
+                            res.json({ status: "1", message: messages.removePayment });
+                        } else {
+                            res.json({ status: "0", message: messages.fail });
+                        }
+                    }
+                )
+            })
+        }, "1");
+    });
+
+    app.post('/api/app/list_payment_method', (req, res) => {
+        helpers.dlog(req.body);
+        var reqObj = req.body;
+
+        checkAccessToken(req.headers, res, (userObj) => {
+            db.query(
+                `SELECT pay_id, name, RIGHT(card_number,4) AS card_number, card_month, card_year FROM 
+                        payment_method_detail WHERE user_id = ? AND status = 1`,
+                [userObj.user_id], (err, result) => {
+                    if (err) {
+                        helpers.throwHtmlError(err, res);
+                        return;
+                    }
+                    res.json({ status: "1", payload: result, message: messages.success });
+                }
+            )
+        }, "1");
+    });
 }

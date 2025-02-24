@@ -85,7 +85,10 @@ const messages = {
   updatePromo: "Promo code updated successfully",
   deletePromo: "Promo code deleted successfully",
   promoExist: "Promo code already exists",
-  promoCodeNotFound: "Promo code not found or already been deleted"
+  promoCodeNotFound: "Promo code not found or already been deleted",
+  addPayment: "Payment method added successfully",
+  removePayment: "Payment method remove successfully",
+  existPayment: "Payment method already exist"
 
 }; 
 module.exports =  messages;
