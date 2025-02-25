@@ -10,6 +10,7 @@ var messages = require('../utils/messages');
 const helpers = require('./../helpers/helpers');
 const express = require('express');
 const path = require('path');
+var delivery_price = 10.0
 
 //HELPER FUNCTIONS
 function getUserData(user_id, callback) {
@@ -224,6 +225,55 @@ function getProductDetail(res, product_id) {
         });
     });
 }
+
+function getUserCart(res, user_id, image_base_url, callback) {
+    db.query(
+        `
+        SELECT 
+            pd.product_id,
+            pd.product_name,
+            cd.category_name,
+            bd.brand_name,
+            td.type_name,
+            pd.price,
+            od.price AS offer_price,
+            2 AS quantity, 
+            (2 * od.price) AS total_price,
+            pd.unit_name,
+            pd.unit_value,
+            (CASE WHEN imd.image != '' 
+                THEN CONCAT(?, imd.image) 
+                ELSE '' 
+            END) AS image,  
+            (CASE WHEN fd.favorite_id IS NOT NULL THEN 1 ELSE 0 END) AS is_favorite
+        FROM offer_detail AS od
+        LEFT JOIN product_details AS pd 
+            ON pd.product_id = od.product_id AND pd.status = 1
+        LEFT JOIN image_detail AS imd 
+            ON pd.product_id = imd.product_id AND imd.status = 1
+        LEFT JOIN category_details AS cd 
+            ON cd.category_id = pd.category_id AND cd.status = 1
+        INNER JOIN brand_detail AS bd 
+            ON bd.brand_id = pd.brand_id AND bd.status = 1
+        LEFT JOIN favorite_detail AS fd 
+            ON pd.product_id = fd.product_id AND fd.status = 1 AND fd.user_id = ?
+        LEFT JOIN type_details AS td 
+            ON pd.type_id = td.type_id AND td.status = 1
+        WHERE od.status = 1 
+          AND od.start_date <= NOW()
+        `,
+        [image_base_url, user_id],
+        (err, result) => {
+            if (err) {
+                helper.throwHtmlError(err, res);
+                return;
+            }
+            let total = result.reduce((sum, item) => sum + parseFloat(item.total_price), 0);
+            return callback(result, total);
+        }
+    );
+}
+
 
 //END-POINT
 module.exports.controllers = (app, io, user_socket_connect_list) => {
@@ -1127,57 +1177,23 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
         })
     })
 
-    app.post('/api/app/cart_list', (req, res) => {
-        helper.dlog(req.body);
-        var reqObj = req.body;
-        const image_base_url = helper.ImagePath();
+   app.post('/api/app/cart_list', (req, res) => {
+    helper.dlog(req.body);
+    const reqObj = req.body;
+    const image_base_url = helper.ImagePath();
 
-        checkAccessToken(req.headers, res, (userObj) => {
-            db.query(`
-                SELECT 
-        pd.product_id,
-        pd.product_name,
-        cd.category_name,
-        bd.brand_name,
-        td.type_name,
-        pd.price,
-        od.price AS offer_price,
-        2 AS quantity, -- Static quantity, replace with actual user input if available
-        (2 * od.price) AS total_price, -- Adjust calculation dynamically
-        pd.unit_name,
-        pd.unit_value,
-        (CASE WHEN imd.image != '' 
-            THEN CONCAT(?, imd.image) 
-            ELSE '' 
-        END) AS image,  
-        (CASE WHEN fd.favorite_id IS NOT NULL THEN 1 ELSE 0 END) AS is_favorite
-    FROM offer_detail AS od
-    INNER JOIN product_details AS pd ON pd.product_id = od.product_id AND pd.status = 1
-    INNER JOIN image_detail AS imd ON pd.product_id = imd.product_id AND imd.status = 1
-    INNER JOIN category_details AS cd ON cd.category_id = pd.category_id AND cd.status = 1
-    INNER JOIN brand_detail AS bd ON bd.brand_id = pd.brand_id AND bd.status = 1
-    LEFT JOIN favorite_detail AS fd ON pd.product_id = fd.product_id AND fd.status = 1
-    INNER JOIN type_details AS td ON pd.type_id = td.type_id AND td.status = 1
-    WHERE od.status = 1 
-    AND od.start_date <= NOW() 
-    AND od.end_date >= NOW();`,
-                [image_base_url], (err, result) => {
-                    if (err) {
-                        helper.throwHtmlError(err, res);
-                        return;
-                    }
-                    let total = result.reduce((sum, item) =>
-                        sum + parseFloat(item.total_price), 0);
-
-                    res.json({
-                        status: "1",
-                        payload: result,
-                        total: total,
-                        message: messages.success
-                    });
-                });
-        }, "1");
+    checkAccessToken(req.headers, res, (userObj) => {
+        // Use userObj.user_id for the logged-in user and pass image_base_url
+        getUserCart(res, userObj.user_id, image_base_url, (result, total) => {
+            res.json({
+                status: "1",
+                payload: result,
+                total: total,
+                message: messages.success
+            });
+        });
     });
+});
 
     app.post('/api/app/add_delivery_address', (req, res) => {
         helper.dlog(req.body);
@@ -1313,7 +1329,7 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
     app.post('/api/app/add_payment_method', (req, res) => {
         helper.dlog(req.body);
         const reqObj = req.body;
-    
+
         checkAccessToken(req.headers, res, (userObj) => {
             helper.checkParameterValid(res, reqObj, ["name", "card_number", "card_month", "card_year"], () => {
                 db.query(
@@ -1349,8 +1365,7 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
             });
         }, "1");
     });
-    
-    
+
     app.post('/api/app/remove_payment_method', (req, res) => {
         helpers.dlog(req.body);
         var reqObj = req.body;
@@ -1360,7 +1375,7 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
                 db.query(
                     `UPDATE payment_method_detail SET status = ? WHERE pay_id = ?
                         AND user_id = ? and status = ?`,
-                        ["2", reqObj.pay_id, userObj.user_id, "1"], (err, result) => {
+                    ["2", reqObj.pay_id, userObj.user_id, "1"], (err, result) => {
                         if (err) {
                             helpers.throwHtmlError(err, res);
                             return;
@@ -1394,4 +1409,165 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
             )
         }, "1");
     });
+
+    app.post('/api/app/order_place', (req, res) => {
+        helper.dlog(req.body);
+        const reqObj = req.body;
+        const image_base_url = helper.ImagePath();
+    
+        checkAccessToken(req.headers, res, (userObj) => {
+            helper.checkParameterValid(
+                res,
+                reqObj,
+                ["pay_id", "address_id", "promo_code_id", "delivery_type", "payment_type"],
+                () => {
+                    getUserCart(res, userObj.user_id, image_base_url, (cartResult, total) => {
+                        if (cartResult.length === 0) {
+                            return res.json({ status: "0", messages: "Cart is empty" });
+                        }
+                        // Get payment method details
+                        db.query(
+                            `SELECT pay_id, user_id, name, card_number, card_month, card_year 
+                             FROM payment_method_detail 
+                             WHERE pay_id = ? AND status = 1`,
+                            [reqObj.pay_id],
+                            (err, paymentResult) => {
+                                if (err) {
+                                    helper.throwHtmlError(err, res);
+                                    return;
+                                }
+                                //  Get promo code details (if provided)
+                                db.query(
+                                    `SELECT promo_code_id, offer_price, minimum_order_amount, maximum_discount_amount, type
+                                     FROM promo_codes
+                                     WHERE status = 1 AND promo_code_id = ?`,
+                                    [reqObj.promo_code_id],
+                                    (err, promoResult) => {
+                                        if (err) {
+                                            helper.throwHtmlError(err, res);
+                                            return;
+                                        }
+                                        // 3. Get address details
+                                        db.query(
+                                            `SELECT address_id, user_id 
+                                             FROM address_detail 
+                                             WHERE address_id = ? AND user_id = ? AND status = 1`,
+                                            [reqObj.address_id, userObj.user_id],
+                                            (err, addressResult) => {
+                                                if (err) {
+                                                    helper.throwHtmlError(err, res);
+                                                    return;
+                                                }
+                                                // Validate address if delivery is required
+                                                if (reqObj.delivery_type === "1" && addressResult.length === 0) {
+                                                    return res.json({
+                                                        status: "0",
+                                                        messages: "Please select a valid address"
+                                                    });
+                                                }
+    
+                                                // Set delivery price based on payment_type 
+                                                let delivery_price_amount = (reqObj.payment_type === "1")
+                                                    ? delivery_price
+                                                    : 0.0;
+    
+                                                let final_total = total + delivery_price_amount;
+                                                let discountAmount = 0.0;
+    
+                                                // Process promo code if provided
+                                                if (reqObj.promo_code_id !== "") {
+                                                    if (promoResult.length > 0) {
+                                                        let promo = promoResult[0];
+                                                        if (final_total >= promo.minimum_order_amount) {
+                                                            if (promo.type === 1) {
+                                                                // Fixed discount
+                                                                discountAmount = promo.offer_price;
+                                                            } else {
+                                                                // Percentage discount calculation
+                                                                let discountVal = (final_total * promo.offer_price) / 100;
+                                                                discountAmount = discountVal > promo.maximum_discount_amount
+                                                                    ? promo.maximum_discount_amount
+                                                                    : discountVal;
+                                                            }
+                                                        } else {
+                                                            return res.json({
+                                                                status: "0",
+                                                                messages:
+                                                                    "Promo code is not applicable. Minimum order amount: " +
+                                                                    promo.minimum_order_amount
+                                                            });
+                                                        }
+                                                    } else {
+                                                        return res.json({
+                                                            status: "0",
+                                                            messages: "Sorry, promo code is not applicable"
+                                                        });
+                                                    }
+                                                }
+                                                // Check if payment method is valid
+                                                if ((reqObj.payment_type === "1" || reqObj.payment_type === "2") && paymentResult.length > 0) {
+                                                    // Generate a unique cart id using Unix timestamp in seconds.
+                                                    const cartId = Math.floor(Date.now() / 1000);
+                                                    const user_pay_price = final_total - discountAmount;
+                                                    db.query(
+                                                        `INSERT INTO cart_details (cart_id, user_id, created_date) VALUES (?, ?, NOW())`,
+                                                        [cartId, userObj.user_id],
+                                                        (err, cartInsertResult) => {
+                                                            if (err) {
+                                                                helper.throwHtmlError(err, res);
+                                                                return;
+                                                            }
+                                                            // order details referencing cart_id.
+                                                            db.query(
+                                                                `INSERT INTO order_details (
+                                                                    cart_id, user_id, address_id, total_price,
+                                                                    user_price, discount_price, delivery_price, promo_code_id,
+                                                                    delivery_type, payment_type
+                                                                ) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+                                                                [
+                                                                    cartId,userObj.user_id,
+                                                                    reqObj.address_id,total,
+                                                                    user_pay_price,discountAmount,
+                                                                    delivery_price_amount,reqObj.promo_code_id,
+                                                                    reqObj.delivery_type,reqObj.payment_type
+                                                                ],
+                                                                (err, orderResult) => {
+                                                                    if (err) {
+                                                                        helper.throwHtmlError(err, res);
+                                                                        return;
+                                                                    }
+                                                                    if (orderResult) {
+                                                                        res.json({
+                                                                            status: "1",
+                                                                            payload: {
+                                                                                order_id: orderResult.insertId,
+                                                                                cart_id: cartId,
+                                                                                user_pay_price: user_pay_price,
+                                                                                delivery_price: delivery_price_amount,
+                                                                                discount_price: discountAmount,
+                                                                                total_price: total
+                                                                            },
+                                                                            messages: "Your order has been placed successfully"
+                                                                        });
+                                                                    } else {
+                                                                        res.json({ status: "0", messages: messages.fail });
+                                                                    }
+                                                                }
+                                                            );
+                                                        }
+                                                    );
+                                                } else {
+                                                    return res.json({ status: "0", messages: messages.fail });
+                                                }
+                                            }
+                                        );
+                                    }
+                                );
+                            }
+                        );
+                    });
+                }
+            );
+        }, "1");
+    });      
 }
