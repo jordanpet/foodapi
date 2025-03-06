@@ -226,7 +226,7 @@ function getProductDetail(res, product_id) {
     });
 }
 
-function getUserCart(res, user_id, image_base_url, callback) {
+function getUserCartWith(res, user_id, image_base_url, callback) {
     db.query(
         `
         SELECT 
@@ -274,6 +274,97 @@ function getUserCart(res, user_id, image_base_url, callback) {
     );
 }
 
+function getUserCart(res, user_id, image_base_url, callback) {
+    db.query(
+        `SELECT 
+            c.cart_id,
+            ci.product_id,
+            ci.quantity,
+            pd.product_name,
+            pd.price,
+            (ci.quantity * pd.price) AS total_price,
+            (CASE 
+                WHEN imd.image != '' THEN CONCAT(?, imd.image)
+                ELSE ''
+             END) AS image
+         FROM carts c
+         JOIN cart_items ci ON c.cart_id = ci.cart_id
+         LEFT JOIN product_details pd ON ci.product_id = pd.product_id AND pd.status = 1
+         LEFT JOIN image_detail imd ON pd.product_id = imd.product_id AND imd.status = 1
+         WHERE c.user_id = ? AND c.status = 1`,
+        [image_base_url, user_id],
+        (err, result) => {
+            if (err) {
+                helper.throwHtmlError(err, res);
+                return;
+            }
+            let total = result.reduce((sum, item) => sum + parseFloat(item.total_price), 0);
+            return callback(result, total);
+        }
+    );
+}
+
+function processPayment(pay_id, amount, callback) {
+
+    helper.dlog(`Attempting payment for pay_id: ${pay_id} with amount: ${amount}`);
+
+    // 1-second delay
+    setTimeout(() => {
+        const isPaymentSuccessful = amount <= 10000;
+        if (isPaymentSuccessful) {
+            helper.dlog('Payment processed successfully.');
+            callback(true);
+        } else {
+            helper.dlog('Payment failed.');
+            callback(false);
+        }
+    }, 1000);
+}
+
+function processCart(cart_id, reqObj, res) {
+    // Check if the product is already in the cart_items table.
+    db.query(
+        `SELECT quantity FROM cart_items WHERE cart_id = ? AND product_id = ?`,
+        [cart_id, reqObj.product_id],
+        (err, itemResult) => {
+            if (err) {
+                helper.throwHtmlError(err, res);
+                return;
+            }
+            if (itemResult.length > 0) {
+                // Product exists: update its quantity.
+                const existingQty = parseInt(itemResult[0].quantity);
+                const newQty = existingQty + parseInt(reqObj.quantity);
+                db.query(
+                    `UPDATE cart_items SET quantity = ?, updated_date = NOW() 
+                     WHERE cart_id = ? AND product_id = ?`,
+                    [newQty, cart_id, reqObj.product_id],
+                    (err, updateResult) => {
+                        if (err) {
+                            helper.throwHtmlError(err, res);
+                            return;
+                        }
+                        res.json({ status: "1", message: "Cart updated successfully." });
+                    }
+                );
+            } else {
+                // Product not yet in the cart: insert a new row.
+                db.query(
+                    `INSERT INTO cart_items (cart_id, product_id, quantity, created_date, updated_date)
+                     VALUES (?, ?, ?, NOW(), NOW())`,
+                    [cart_id, reqObj.product_id, reqObj.quantity],
+                    (err, insertResult) => {
+                        if (err) {
+                            helper.throwHtmlError(err, res);
+                            return;
+                        }
+                        res.json({ status: "1", message: "Item added to cart successfully.", cart_id: cart_id });
+                    }
+                );
+            }
+        }
+    );
+}
 
 //END-POINT
 module.exports.controllers = (app, io, user_socket_connect_list) => {
@@ -1086,59 +1177,79 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
 
     app.post('/api/app/add_to_cart', (req, res) => {
         helper.dlog(req.body);
-        var reqObj = req.body;
+        const reqObj = req.body;
 
         checkAccessToken(req.headers, res, (userObj) => {
             helper.checkParameterValid(res, reqObj, ["product_id", "quantity"], () => {
+                // Verify that the product exists and is active.
                 db.query(
                     `SELECT product_id FROM product_details WHERE product_id = ? AND status = 1`,
-                    [reqObj.product_id], (err, result) => {
+                    [reqObj.product_id],
+                    (err, productResult) => {
                         if (err) {
-                            helpers.throwHtmlError(err, res);
+                            helper.throwHtmlError(err, res);
                             return;
                         }
-                        if (result.length > 0) {
-                            db.query(
-                                `INSERT INTO cart_details (user_id, product_id, quantity) VALUES (?,?,?)`,
-                                [userObj.user_id, reqObj.product_id, reqObj.quantity],
-                                (err, result) => {
-                                    if (err) {
-                                        helpers.throwHtmlError(err, res);
-                                        return;
-                                    }
-                                    if (result) {
-                                        res.json({ status: "1", message: messages.addItem });
-                                    } else {
-                                        res.json({ status: "0", message: messages.fail });
-                                    }
-                                });
-                        } else {
-                            res.json({ status: "0", message: messages.invalidItem });
+                        if (productResult.length === 0) {
+                            return res.json({ status: "0", message: messages.invalidItem });
                         }
+
+                        // Look for an active cart in the carts table.
+                        db.query(
+                            `SELECT cart_id FROM carts WHERE user_id = ? AND status = 1 LIMIT 1`,
+                            [userObj.user_id],
+                            (err, activeCartResult) => {
+                                if (err) {
+                                    helper.throwHtmlError(err, res);
+                                    return;
+                                }
+
+                                if (activeCartResult.length > 0) {
+                                    // Active cart exists—use its cart_id.
+                                    processCart(activeCartResult[0].cart_id, reqObj, res);
+                                } else {
+                                    // No active cart exists—create a new cart.
+                                    db.query(
+                                        `INSERT INTO carts (user_id, status, created_date, updated_date)
+                                         VALUES (?, 1, NOW(), NOW())`,
+                                        [userObj.user_id],
+                                        (err, cartInsertResult) => {
+                                            if (err) {
+                                                helper.throwHtmlError(err, res);
+                                                return;
+                                            }
+                                            processCart(cartInsertResult.insertId, reqObj, res);
+                                        }
+                                    );
+                                }
+                            }
+                        );
                     }
-                )
-            })
-        }, "1")
-    })
+                );
+            });
+        }, "1");
+    });
 
     app.post('/api/app/update_cart', (req, res) => {
         helper.dlog(req.body);
-        var reqObj = req.body;
+        const reqObj = req.body;
 
         checkAccessToken(req.headers, res, (userObj) => {
             helper.checkParameterValid(res, reqObj, ["cart_id", "product_id", "quantity"], () => {
-                var status = "1"
-                if (reqObj.new_quantity === "0") {
-                    status = "2"
+                // Decide the status: if quantity is 0, you may mark it as removed (e.g., status 2).
+                // Here we'll update the quantity and status (if needed).
+                let status = "1";
+                if (reqObj.quantity === "0") {
+                    status = "2";
                 }
                 db.query(
-                    `UPDATE cart_details 
-                     SET quantity = ?, status = ? 
-                     WHERE cart_id = ? AND product_id = ? AND user_id = ?`,
-                    [reqObj.quantity, status, reqObj.cart_id, reqObj.product_id,
-                    userObj.user_id], (err, result) => {
+                    `UPDATE cart_items 
+                     SET quantity = ?, updated_date = NOW() 
+                     WHERE cart_id = ? AND product_id = ?`,
+                    [reqObj.quantity, reqObj.cart_id, reqObj.product_id],
+                    (err, result) => {
                         if (err) {
-                            helpers.throwHtmlError(err, res);
+                            helper.throwHtmlError(err, res);
                             return;
                         }
                         if (result.affectedRows > 0) {
@@ -1147,24 +1258,24 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
                             res.json({ status: "0", message: messages.invalidItem });
                         }
                     }
-                )
-            })
-        }, "1")
-    })
+                );
+            });
+        }, "1");
+    });
 
     app.post('/api/app/remove_cart', (req, res) => {
         helper.dlog(req.body);
-        var reqObj = req.body;
+        const reqObj = req.body;
 
         checkAccessToken(req.headers, res, (userObj) => {
             helper.checkParameterValid(res, reqObj, ["cart_id", "product_id"], () => {
-
                 db.query(
-                    `DELETE FROM cart_details 
-                     WHERE cart_id = ? AND product_id = ? AND user_id = ?`,
-                    [reqObj.cart_id, reqObj.product_id, userObj.user_id], (err, result) => {
+                    `DELETE FROM cart_items 
+                     WHERE cart_id = ? AND product_id = ?`,
+                    [reqObj.cart_id, reqObj.product_id],
+                    (err, result) => {
                         if (err) {
-                            helpers.throwHtmlError(err, res);
+                            helper.throwHtmlError(err, res);
                             return;
                         }
                         if (result.affectedRows > 0) {
@@ -1172,28 +1283,29 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
                         } else {
                             res.json({ status: "0", message: messages.invalidItem });
                         }
-                    })
-            }, "1")
-        })
-    })
+                    }
+                );
+            });
+        }, "1");
+    });
 
-   app.post('/api/app/cart_list', (req, res) => {
-    helper.dlog(req.body);
-    const reqObj = req.body;
-    const image_base_url = helper.ImagePath();
+    app.post('/api/app/cart_list', (req, res) => {
+        helper.dlog(req.body);
+        const reqObj = req.body;
+        const image_base_url = helper.ImagePath();
 
-    checkAccessToken(req.headers, res, (userObj) => {
-        // Use userObj.user_id for the logged-in user and pass image_base_url
-        getUserCart(res, userObj.user_id, image_base_url, (result, total) => {
-            res.json({
-                status: "1",
-                payload: result,
-                total: total,
-                message: messages.success
+        checkAccessToken(req.headers, res, (userObj) => {
+            // Use the getUserCart function to fetch the user's active cart items.
+            getUserCart(res, userObj.user_id, image_base_url, (result, total) => {
+                res.json({
+                    status: "1",
+                    payload: result,
+                    total: total,
+                    message: messages.success
+                });
             });
         });
     });
-});
 
     app.post('/api/app/add_delivery_address', (req, res) => {
         helper.dlog(req.body);
@@ -1414,160 +1526,286 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
         helper.dlog(req.body);
         const reqObj = req.body;
         const image_base_url = helper.ImagePath();
-    
+        const delivery_price = 5.0;
+
         checkAccessToken(req.headers, res, (userObj) => {
-            helper.checkParameterValid(
-                res,
-                reqObj,
-                ["pay_id", "address_id", "promo_code_id", "delivery_type", "payment_type"],
-                () => {
-                    getUserCart(res, userObj.user_id, image_base_url, (cartResult, total) => {
-                        if (cartResult.length === 0) {
-                            return res.json({ status: "0", messages: "Cart is empty" });
-                        }
-                        // Get payment method details
-                        db.query(
-                            `SELECT pay_id, user_id, name, card_number, card_month, card_year 
-                             FROM payment_method_detail 
-                             WHERE pay_id = ? AND status = 1`,
-                            [reqObj.pay_id],
-                            (err, paymentResult) => {
-                                if (err) {
-                                    helper.throwHtmlError(err, res);
-                                    return;
-                                }
-                                //  Get promo code details (if provided)
-                                db.query(
-                                    `SELECT promo_code_id, offer_price, minimum_order_amount, maximum_discount_amount, type
-                                     FROM promo_codes
-                                     WHERE status = 1 AND promo_code_id = ?`,
-                                    [reqObj.promo_code_id],
-                                    (err, promoResult) => {
-                                        if (err) {
-                                            helper.throwHtmlError(err, res);
-                                            return;
-                                        }
-                                        // 3. Get address details
-                                        db.query(
-                                            `SELECT address_id, user_id 
-                                             FROM address_detail 
-                                             WHERE address_id = ? AND user_id = ? AND status = 1`,
-                                            [reqObj.address_id, userObj.user_id],
-                                            (err, addressResult) => {
-                                                if (err) {
-                                                    helper.throwHtmlError(err, res);
-                                                    return;
-                                                }
-                                                // Validate address if delivery is required
-                                                if (reqObj.delivery_type === "1" && addressResult.length === 0) {
+            helper.checkParameterValid(res, reqObj, ["promo_code_id", "delivery_type", "payment_type"], () => {
+                // Get active cart items from the new structure.
+                getUserCart(res, userObj.user_id, image_base_url, (cartResult, total) => {
+                    if (cartResult.length === 0) {
+                        return res.json({ status: "0", messages: "Cart is empty. Add products before ordering." });
+                    }
+
+                    // Retrieve the user's default payment method.
+                    db.query(
+                        `SELECT pay_id FROM payment_method_detail WHERE user_id = ? AND status = 1 LIMIT 1`,
+                        [userObj.user_id],
+                        (err, paymentResult) => {
+                            if (err) return helper.throwHtmlError(err, res);
+                            if (paymentResult.length === 0) {
+                                return res.json({ status: "0", messages: "No valid payment method found. Please add a payment method first." });
+                            }
+                            const pay_id = paymentResult[0].pay_id;
+
+                            // Get the user's default address.
+                            db.query(
+                                `SELECT address_id FROM address_detail WHERE user_id = ? AND status = 1 ORDER BY created_date DESC LIMIT 1`,
+                                [userObj.user_id],
+                                (err, addressResult) => {
+                                    if (err) return helper.throwHtmlError(err, res);
+                                    if (addressResult.length === 0) {
+                                        return res.json({ status: "0", messages: "No valid address found. Please add an address first." });
+                                    }
+                                    const address_id = addressResult[0].address_id;
+
+                                    // Check if a valid promo code is available.
+                                    db.query(
+                                        `SELECT promo_code_id, offer_price, minimum_order_amount, maximum_discount_amount, type 
+                                         FROM promo_codes WHERE status = 1 AND promo_code_id = ?`,
+                                        [reqObj.promo_code_id],
+                                        (err, promoResult) => {
+                                            if (err) return helper.throwHtmlError(err, res);
+
+                                            let discountAmount = 0.0;
+                                            let final_total = total;
+                                            if (reqObj.promo_code_id !== "" && promoResult.length > 0) {
+                                                let promo = promoResult[0];
+                                                if (total >= promo.minimum_order_amount) {
+                                                    if (promo.type === 1) {
+                                                        discountAmount = promo.offer_price;
+                                                    } else {
+                                                        let discountVal = (total * promo.offer_price) / 100;
+                                                        discountAmount = discountVal > promo.maximum_discount_amount
+                                                            ? promo.maximum_discount_amount
+                                                            : discountVal;
+                                                    }
+                                                } else {
                                                     return res.json({
                                                         status: "0",
-                                                        messages: "Please select a valid address"
+                                                        messages: `Promo code is not applicable. Minimum order amount: ${promo.minimum_order_amount}`
                                                     });
                                                 }
-    
-                                                // Set delivery price based on payment_type 
-                                                let delivery_price_amount = (reqObj.payment_type === "1")
-                                                    ? delivery_price
-                                                    : 0.0;
-    
-                                                let final_total = total + delivery_price_amount;
-                                                let discountAmount = 0.0;
-    
-                                                // Process promo code if provided
-                                                if (reqObj.promo_code_id !== "") {
-                                                    if (promoResult.length > 0) {
-                                                        let promo = promoResult[0];
-                                                        if (final_total >= promo.minimum_order_amount) {
-                                                            if (promo.type === 1) {
-                                                                // Fixed discount
-                                                                discountAmount = promo.offer_price;
-                                                            } else {
-                                                                // Percentage discount calculation
-                                                                let discountVal = (final_total * promo.offer_price) / 100;
-                                                                discountAmount = discountVal > promo.maximum_discount_amount
-                                                                    ? promo.maximum_discount_amount
-                                                                    : discountVal;
+                                            }
+                                            final_total = final_total - discountAmount;
+                                            const delivery_price_amount = reqObj.delivery_type === "1" ? delivery_price : 0.0;
+                                            final_total = final_total + delivery_price_amount;
+
+                                            // Process Payment Before Inserting Order
+                                            processPayment(pay_id, final_total, (paymentSuccess) => {
+                                                if (!paymentSuccess) {
+                                                    return res.json({ status: "0", messages: "Payment failed. Please try again." });
+                                                }
+
+                                                // Use the cart_id from the first item (all items share the same cart_id)
+                                                let activeCartId = cartResult[0].cart_id;
+                                                // Insert a single order record for the entire cart.
+                                                db.query(
+                                                    `INSERT INTO order_details (
+                                                        cart_id, user_id, address_id, total_price, 
+                                                        user_price, discount_price, delivery_price, 
+                                                        promo_code_id, payment_type, pay_id
+                                                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                                                    [
+                                                        activeCartId,
+                                                        userObj.user_id,
+                                                        address_id,
+                                                        total,
+                                                        final_total,
+                                                        discountAmount,
+                                                        delivery_price_amount,
+                                                        reqObj.promo_code_id,
+                                                        reqObj.payment_type,
+                                                        pay_id
+                                                    ],
+                                                    (err, orderResult) => {
+                                                        if (err) return helper.throwHtmlError(err, res);
+                                                        // Mark the cart as processed (status = 2) in the carts table.
+                                                        db.query(
+                                                            `UPDATE carts SET status = 2, updated_date = NOW() WHERE cart_id = ?`,
+                                                            [activeCartId],
+                                                            (err) => {
+                                                                if (err) return helper.throwHtmlError(err, res);
+                                                                return res.json({
+                                                                    status: "1",
+                                                                    payload: {
+                                                                        order_id: orderResult.insertId,
+                                                                        final_total,
+                                                                        discountAmount,
+                                                                        total_price: total
+                                                                    },
+                                                                    messages: "Your order has been placed successfully."
+                                                                });
                                                             }
-                                                        } else {
-                                                            return res.json({
-                                                                status: "0",
-                                                                messages:
-                                                                    "Promo code is not applicable. Minimum order amount: " +
-                                                                    promo.minimum_order_amount
-                                                            });
-                                                        }
-                                                    } else {
-                                                        return res.json({
-                                                            status: "0",
-                                                            messages: "Sorry, promo code is not applicable"
-                                                        });
+                                                        );
                                                     }
-                                                }
-                                                // Check if payment method is valid
-                                                if ((reqObj.payment_type === "1" || reqObj.payment_type === "2") && paymentResult.length > 0) {
-                                                    // Generate a unique cart id using Unix timestamp in seconds.
-                                                    const cartId = Math.floor(Date.now() / 1000);
-                                                    const user_pay_price = final_total - discountAmount;
-                                                    db.query(
-                                                        `INSERT INTO cart_details (cart_id, user_id, created_date) VALUES (?, ?, NOW())`,
-                                                        [cartId, userObj.user_id],
-                                                        (err, cartInsertResult) => {
-                                                            if (err) {
-                                                                helper.throwHtmlError(err, res);
-                                                                return;
-                                                            }
-                                                            // order details referencing cart_id.
-                                                            db.query(
-                                                                `INSERT INTO order_details (
-                                                                    cart_id, user_id, address_id, total_price,
-                                                                    user_price, discount_price, delivery_price, promo_code_id,
-                                                                    delivery_type, payment_type
-                                                                ) VALUES (?,?,?,?,?,?,?,?,?,?)`,
-                                                                [
-                                                                    cartId,userObj.user_id,
-                                                                    reqObj.address_id,total,
-                                                                    user_pay_price,discountAmount,
-                                                                    delivery_price_amount,reqObj.promo_code_id,
-                                                                    reqObj.delivery_type,reqObj.payment_type
-                                                                ],
-                                                                (err, orderResult) => {
-                                                                    if (err) {
-                                                                        helper.throwHtmlError(err, res);
-                                                                        return;
-                                                                    }
-                                                                    if (orderResult) {
-                                                                        res.json({
-                                                                            status: "1",
-                                                                            payload: {
-                                                                                order_id: orderResult.insertId,
-                                                                                cart_id: cartId,
-                                                                                user_pay_price: user_pay_price,
-                                                                                delivery_price: delivery_price_amount,
-                                                                                discount_price: discountAmount,
-                                                                                total_price: total
-                                                                            },
-                                                                            messages: "Your order has been placed successfully"
-                                                                        });
-                                                                    } else {
-                                                                        res.json({ status: "0", messages: messages.fail });
-                                                                    }
-                                                                }
-                                                            );
-                                                        }
-                                                    );
-                                                } else {
-                                                    return res.json({ status: "0", messages: messages.fail });
-                                                }
+                                                );
+                                            });
+                                        }
+                                    );
+                                }
+                            );
+                        }
+                    );
+                });
+            });
+        }, "1");
+    });
+
+    app.post('/api/app/confirm_payment', (req, res) => {
+        helper.dlog(req.body);
+        var reqObj = req.body;
+        checkAccessToken(req.headers, res, (userObj) => {
+            // Fetch the most recent order pending payment 
+            db.query(
+                `SELECT order_id, cart_id, total_price, user_price, discount_price, delivery_price, payment_type, pay_id
+                 FROM order_details
+                 WHERE user_id = ? AND payment_status = 0 AND status = 1
+                 ORDER BY created_date DESC LIMIT 1`,
+                [userObj.user_id],
+                (err, orderResults) => {
+                    if (err) return helper.throwHtmlError(err, res);
+                    if (orderResults.length === 0) {
+                        return res.json({ status: "0", message: "No pending payment order found." });
+                    }
+                    const order = orderResults[0];
+
+                    // Retrieve the user's active payment method details
+                    db.query(
+                        `SELECT * FROM payment_method_detail WHERE user_id = ? AND status = 1 LIMIT 1`,
+                        [userObj.user_id],
+                        (err, paymentMethods) => {
+                            if (err) return helper.throwHtmlError(err, res);
+                            if (paymentMethods.length === 0) {
+                                return res.json({ status: "0", message: "No valid payment method found. Please add one first." });
+                            }
+                            const paymentMethod = paymentMethods[0];
+
+                            // At this point, you would normally call your payment gateway API with the fetched details.
+                            // For demonstration purposes, i simulate a successful payment.
+                            const payment_status = "1"; // Simulate successful payment
+                            const transaction_id = "TXN_" + Date.now(); // Simulated transaction id
+                            const payment_transaction_id = "PTX_" + Date.now(); //  Simulated payment_transaction_id 
+
+                            // Record the payment transaction details
+                            db.query(
+                                `INSERT INTO order_payment_detail (order_id, pay_id, transaction_id, 
+                                transaction_payload, payment_transaction_id, status) VALUES (?, ?, ?, ?, ?, ?)`,
+                                [order.order_id, paymentMethod.pay_id, transaction_id, reqObj.transaction_payload || '',
+                                    payment_transaction_id, payment_status], (err, paymentInsertResult) => {
+                                        if (err) return helper.throwHtmlError(err, res);
+
+                                        // Update the order's payment status in the order_details table
+                                        db.query(
+                                            `UPDATE order_details SET payment_status = ?, updated_date = NOW() 
+                                            WHERE order_id = ? AND user_id = ?`,
+                                            [payment_status, order.order_id, userObj.user_id],
+                                            (err, updateResult) => {
+                                                if (err) return helper.throwHtmlError(err, res);
+
+                                                // Return the order and payment details so the user can see what they're paying for
+                                                return res.json({
+                                                    status: "1",
+                                                    message: "Payment processed successfully.",
+                                                    payload: {
+                                                        order_id: order.order_id,
+                                                        cart_id: order.cart_id,
+                                                        total_amount: order.total_price,
+                                                        payment_method: paymentMethod,
+                                                        transaction_id: transaction_id,
+                                                        payment_transaction_id: payment_transaction_id
+                                                    }
+                                                });
                                             }
                                         );
                                     }
-                                );
-                            }
-                        );
-                    });
+                            );
+                        }
+                    );
                 }
             );
         }, "1");
-    });      
+    });
+
+    app.post('/api/app/my_orders', (req, res) => {
+        helper.dlog(req.body);
+        var reqObj = req.body;
+
+        checkAccessToken(req.headers, res, (userObj) => {
+            const userId = userObj.user_id || userObj.id;
+            db.query(
+                `SELECT 
+                    od.order_id,od.cart_id,od.user_id, 
+                    od.address_id,od.total_price,od.user_price, 
+                    od.discount_price,od.delivery_price,od.promo_code_id, 
+                    od.payment_type,od.pay_id,od.payment_status, 
+                    od.order_status,od.status,od.created_date,
+                    GROUP_CONCAT(DISTINCT ci.product_id SEPARATOR ', ') AS product_ids,
+                    GROUP_CONCAT(DISTINCT ci.quantity SEPARATOR ', ') AS quantities,
+                    GROUP_CONCAT(DISTINCT pd.product_name SEPARATOR ', ') AS names,
+                    GROUP_CONCAT(DISTINCT (CASE WHEN imd.image <> '' THEN CONCAT(?, imd.image) ELSE '' END) SEPARATOR ', ') 
+                    AS images
+                 FROM order_details AS od 
+                 INNER JOIN cart_items AS ci ON od.cart_id = ci.cart_id
+                 INNER JOIN product_details AS pd ON ci.product_id = pd.product_id
+                 LEFT JOIN image_detail AS imd ON pd.product_id = imd.product_id AND imd.status = 1
+                 WHERE od.user_id = ?
+                 GROUP BY od.order_id`,[image_base_url, userId],(err, result) => {
+                    if (err) {
+                        helper.throwHtmlError(err, res);
+                        return;
+                    }
+                    
+                        res.json({ status: "1", payload: result, message: messages.success });
+                      
+                        
+                    
+                }
+            );
+        }, "1");
+    });
+
+    app.post('/api/app/my_orders_details', (req, res) => {
+        helper.dlog(req.body);
+        var reqObj = req.body;
+    
+        // Validate that "order_id" is provided in the request body.
+        checkAccessToken(req.headers, res, (userObj) => {
+            helper.checkParameterValid(res, reqObj, ["order_id"], () => {
+                const userId = userObj.user_id || userObj.id;
+                db.query(
+                    `SELECT 
+                        od.order_id,od.cart_id,od.user_id,
+                        od.address_id,od.total_price,od.user_price,
+                        od.discount_price,od.delivery_price,od.promo_code_id,
+                        od.payment_type,od.pay_id,od.payment_status,
+                        od.order_status,od.status,od.created_date,
+                        GROUP_CONCAT(DISTINCT ci.product_id SEPARATOR ', ') AS product_ids,
+                        GROUP_CONCAT(DISTINCT ci.quantity SEPARATOR ', ') AS quantities,
+                        GROUP_CONCAT(DISTINCT pd.product_name SEPARATOR ', ') AS product_names,
+                        GROUP_CONCAT(DISTINCT (CASE 
+                            WHEN imd.image <> '' THEN CONCAT(?, imd.image)
+                            ELSE '' END) SEPARATOR ', ') AS images
+                     FROM order_details od
+                     JOIN cart_items ci ON od.cart_id = ci.cart_id
+                     JOIN product_details pd ON ci.product_id = pd.product_id AND pd.status = 1
+                     LEFT JOIN image_detail imd ON pd.product_id = imd.product_id AND imd.status = 1
+                     WHERE od.user_id = ? AND od.order_id = ?
+                     GROUP BY od.order_id`,
+                    [image_base_url, userId, reqObj.order_id],
+                    (err, result) => {
+                        if (err) {
+                            helper.throwHtmlError(err, res);
+                            return;
+                        }
+                        if (result.length > 0) {
+                            res.json({ status: "1", payload: result[0], message: messages.success });
+                        } else {
+                            res.json({ status: "0", message: "Invalid order" });
+                        }
+                    }
+                );
+            });
+        }, "1");
+    });
+    
 }
