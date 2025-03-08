@@ -10,6 +10,7 @@ var messages = require('../utils/messages');
 const helpers = require('./../helpers/helpers');
 const express = require('express');
 const path = require('path');
+require('dotenv').config();
 var delivery_price = 10.0
 
 //HELPER FUNCTIONS
@@ -365,6 +366,31 @@ function processCart(cart_id, reqObj, res) {
         }
     );
 }
+
+function formatOrder(row) {
+    return {
+        order_id: row.order_id,
+        cart_id: row.cart_id,
+        user_id: row.user_id,
+        address_id: row.address_id,
+        total_price: row.total_price,
+        user_price: row.user_price,
+        discount_price: row.discount_price,
+        delivery_price: row.delivery_price,
+        promo_code_id: row.promo_code_id,
+        payment_type: row.payment_type,
+        pay_id: row.pay_id,
+        payment_status: row.payment_status,
+        order_status: row.order_status,
+        status: row.status,
+        created_date: row.created_date,
+        product_ids: row.product_ids,
+        quantities: row.quantities,
+        product_names: row.product_names, // or use 'names' consistently if preferred
+        images: row.images
+    };
+}
+
 
 //END-POINT
 module.exports.controllers = (app, io, user_socket_connect_list) => {
@@ -1529,14 +1555,15 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
         const delivery_price = 5.0;
 
         checkAccessToken(req.headers, res, (userObj) => {
+            // Validate required parameters.
             helper.checkParameterValid(res, reqObj, ["promo_code_id", "delivery_type", "payment_type"], () => {
-                // Get active cart items from the new structure.
+                // 1. Get active cart items.
                 getUserCart(res, userObj.user_id, image_base_url, (cartResult, total) => {
                     if (cartResult.length === 0) {
                         return res.json({ status: "0", messages: "Cart is empty. Add products before ordering." });
                     }
 
-                    // Retrieve the user's default payment method.
+                    // 2. Retrieve the user's default payment method.
                     db.query(
                         `SELECT pay_id FROM payment_method_detail WHERE user_id = ? AND status = 1 LIMIT 1`,
                         [userObj.user_id],
@@ -1547,7 +1574,7 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
                             }
                             const pay_id = paymentResult[0].pay_id;
 
-                            // Get the user's default address.
+                            // 3. Get the user's default address.
                             db.query(
                                 `SELECT address_id FROM address_detail WHERE user_id = ? AND status = 1 ORDER BY created_date DESC LIMIT 1`,
                                 [userObj.user_id],
@@ -1558,7 +1585,7 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
                                     }
                                     const address_id = addressResult[0].address_id;
 
-                                    // Check if a valid promo code is available.
+                                    // 4. Check for a valid promo code (optional).
                                     db.query(
                                         `SELECT promo_code_id, offer_price, minimum_order_amount, maximum_discount_amount, type 
                                          FROM promo_codes WHERE status = 1 AND promo_code_id = ?`,
@@ -1590,51 +1617,97 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
                                             const delivery_price_amount = reqObj.delivery_type === "1" ? delivery_price : 0.0;
                                             final_total = final_total + delivery_price_amount;
 
-                                            // Process Payment Before Inserting Order
+                                            // 5. Process Payment.
                                             processPayment(pay_id, final_total, (paymentSuccess) => {
                                                 if (!paymentSuccess) {
                                                     return res.json({ status: "0", messages: "Payment failed. Please try again." });
                                                 }
 
-                                                // Use the cart_id from the first item (all items share the same cart_id)
-                                                let activeCartId = cartResult[0].cart_id;
-                                                // Insert a single order record for the entire cart.
+                                                // 6. Aggregate cart items.
+                                                const activeCartId = cartResult[0].cart_id;
+                                                const product_ids = cartResult.map(item => item.product_id).join(", ");
+                                                const quantities = cartResult.map(item => item.quantity).join(", ");
+                                                const names = cartResult.map(item => item.product_name).join(", ");
+                                                const images = cartResult.map(item => item.image).join(", ");
+
+                                                // 7. Insert a single order record.
                                                 db.query(
                                                     `INSERT INTO order_details (
-                                                        cart_id, user_id, address_id, total_price, 
-                                                        user_price, discount_price, delivery_price, 
-                                                        promo_code_id, payment_type, pay_id
-                                                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                                                        user_id, cart_id, product_ids, quantities, product_name, images,
+                                                        address_id, total_price, user_price, discount_price, delivery_price,
+                                                        promo_code_id, payment_type, pay_id, order_status
+                                                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                                                     [
-                                                        activeCartId,
-                                                        userObj.user_id,
-                                                        address_id,
-                                                        total,
-                                                        final_total,
-                                                        discountAmount,
-                                                        delivery_price_amount,
-                                                        reqObj.promo_code_id,
-                                                        reqObj.payment_type,
-                                                        pay_id
+                                                        userObj.user_id,       // user_id
+                                                        activeCartId,          // cart_id
+                                                        product_ids,           // aggregated product_ids
+                                                        quantities,            // aggregated quantities
+                                                        names,                 // aggregated product names
+                                                        images,                // aggregated images
+                                                        address_id,            // address_id
+                                                        total,                 // total_price
+                                                        final_total,           // user_price
+                                                        discountAmount,        // discount_price
+                                                        delivery_price_amount, // delivery_price
+                                                        reqObj.promo_code_id,  // promo_code_id
+                                                        reqObj.payment_type,   // payment_type
+                                                        pay_id,                // pay_id
+                                                        1                      // order_status set to 1 for "order placed"
                                                     ],
                                                     (err, orderResult) => {
                                                         if (err) return helper.throwHtmlError(err, res);
-                                                        // Mark the cart as processed (status = 2) in the carts table.
+
+                                                        // 8. Optionally, insert a notification if needed.
+                                                        if (reqObj.payment_type == "1") {
+                                                            db.query(
+                                                                `INSERT INTO notification_details (ref_id, user_id, title, message, notification_type)
+                                                                 VALUES (?, ?, ?, ?, ?)`,
+                                                                [
+                                                                    orderResult.insertId,
+                                                                    userObj.user_id,
+                                                                    "Order Placed",
+                                                                    "Your order #" + orderResult.insertId + " has been placed.",
+                                                                    "2",
+                                                                    "1"
+                                                                ],
+                                                                (err, iResult) => {
+                                                                    if (err) {
+                                                                        helper.throwHtmlError(err, res);
+                                                                        return;
+                                                                    }
+                                                                    helper.dlog("Notification added");
+                                                                }
+                                                            );
+                                                        }
+
+                                                        // 9. Fetch the complete order details with aggregated product data.
                                                         db.query(
-                                                            `UPDATE carts SET status = 2, updated_date = NOW() WHERE cart_id = ?`,
-                                                            [activeCartId],
-                                                            (err) => {
+                                                            `SELECT 
+                                                                od.order_id, od.cart_id, od.user_id, od.address_id, od.total_price, od.user_price, od.discount_price, od.delivery_price,
+                                                                od.promo_code_id, od.payment_type, od.pay_id, od.payment_status, od.order_status, od.status, od.created_date,
+                                                                GROUP_CONCAT(DISTINCT ci.product_id SEPARATOR ', ') AS product_ids,
+                                                                GROUP_CONCAT(DISTINCT ci.quantity SEPARATOR ', ') AS quantities,
+                                                                GROUP_CONCAT(DISTINCT pd.product_name SEPARATOR ', ') AS product_names,
+                                                                GROUP_CONCAT(DISTINCT (CASE WHEN imd.image <> '' THEN CONCAT(?, imd.image) ELSE '' END) SEPARATOR ', ') AS images
+                                                             FROM order_details od
+                                                             JOIN cart_items ci ON od.cart_id = ci.cart_id
+                                                             JOIN product_details pd ON ci.product_id = pd.product_id AND pd.status = 1
+                                                             LEFT JOIN image_detail imd ON pd.product_id = imd.product_id AND imd.status = 1
+                                                             WHERE od.order_id = ? AND od.user_id = ?
+                                                             GROUP BY od.order_id`,
+                                                            [image_base_url, orderResult.insertId, userObj.user_id],
+                                                            (err, orderResults) => {
                                                                 if (err) return helper.throwHtmlError(err, res);
-                                                                return res.json({
-                                                                    status: "1",
-                                                                    payload: {
-                                                                        order_id: orderResult.insertId,
-                                                                        final_total,
-                                                                        discountAmount,
-                                                                        total_price: total
-                                                                    },
-                                                                    messages: "Your order has been placed successfully."
-                                                                });
+                                                                if (orderResults.length > 0) {
+                                                                    const formattedOrder = formatOrder(orderResults[0]);
+                                                                    return res.json({
+                                                                        status: "1",
+                                                                        payload: formattedOrder,
+                                                                        messages: "Your order has been placed successfully."
+                                                                    });
+                                                                } else {
+                                                                    return res.json({ status: "0", messages: "Order not found." });
+                                                                }
                                                             }
                                                         );
                                                     }
@@ -1644,9 +1717,56 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
                                     );
                                 }
                             );
+                        });
+                }, "1");
+            });
+        });
+    });
+
+    app.post('/api/app/cancel_order', (req, res) => {
+        helper.dlog(req.body);
+        const reqObj = req.body;
+
+        // Validate that "order_id" is provided in the request body.
+        checkAccessToken(req.headers, res, (userObj) => {
+            helper.checkParameterValid(res, reqObj, ["order_id"], () => {
+                const userId = userObj.user_id || userObj.id;
+
+                // Check that the order exists and belongs to the user.
+                db.query(
+                    `SELECT order_id, order_status FROM order_details WHERE order_id = ? AND user_id = ?`,
+                    [reqObj.order_id, userId],
+                    (err, results) => {
+                        if (err) return helper.throwHtmlError(err, res);
+                        if (results.length === 0) {
+                            return res.json({ status: "0", message: "Order not found." });
                         }
-                    );
-                });
+
+                        const order = results[0];
+
+                        // Check if the order is already cancelled.
+                        // Assuming order_status 3 indicates cancellation.
+                        if (order.order_status == 0) {
+                            return res.json({ status: "0", message: "Order is already cancelled." });
+                        }
+
+                        // Optionally, check if the order is in a cancelable state.
+                        // For example, if you allow cancellation for orders with status 1 (placed) or 2 (confirmed)
+                        if (order.order_status != 1 && order.order_status != 2) {
+                            return res.json({ status: "0", message: "This order cannot be cancelled." });
+                        }
+
+                        // Update the order_status to 3 (cancelled) and update the updated_date.
+                        db.query(
+                            `UPDATE order_details SET order_status = ?, updated_date = NOW() WHERE order_id = ? AND user_id = ?`,
+                            [0, reqObj.order_id, userId],
+                            (err, updateResult) => {
+                                if (err) return helper.throwHtmlError(err, res);
+                                return res.json({ status: "1", message: "Order cancelled successfully." });
+                            }
+                        );
+                    }
+                );
             });
         }, "1");
     });
@@ -1655,12 +1775,12 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
         helper.dlog(req.body);
         var reqObj = req.body;
         checkAccessToken(req.headers, res, (userObj) => {
-            // Fetch the most recent order pending payment 
+            // Fetch the most recent order with pending payment.
             db.query(
                 `SELECT order_id, cart_id, total_price, user_price, discount_price, delivery_price, payment_type, pay_id
-                 FROM order_details
-                 WHERE user_id = ? AND payment_status = 0 AND status = 1
-                 ORDER BY created_date DESC LIMIT 1`,
+                     FROM order_details
+                     WHERE user_id = ? AND payment_status = 'pending' AND status = 1
+                     ORDER BY created_date DESC LIMIT 1`,
                 [userObj.user_id],
                 (err, orderResults) => {
                     if (err) return helper.throwHtmlError(err, res);
@@ -1669,7 +1789,7 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
                     }
                     const order = orderResults[0];
 
-                    // Retrieve the user's active payment method details
+                    // Retrieve the user's active payment method details.
                     db.query(
                         `SELECT * FROM payment_method_detail WHERE user_id = ? AND status = 1 LIMIT 1`,
                         [userObj.user_id],
@@ -1680,44 +1800,97 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
                             }
                             const paymentMethod = paymentMethods[0];
 
-                            // At this point, you would normally call your payment gateway API with the fetched details.
-                            // For demonstration purposes, i simulate a successful payment.
-                            const payment_status = "1"; // Simulate successful payment
-                            const transaction_id = "TXN_" + Date.now(); // Simulated transaction id
-                            const payment_transaction_id = "PTX_" + Date.now(); //  Simulated payment_transaction_id 
+                            // Simulate a successful payment process.
+                            const newPaymentStatus = 1; // Payment completed
+                            const transaction_id = "TXN_" + Date.now();
+                            const payment_transaction_id = "PTX_" + Date.now();
 
-                            // Record the payment transaction details
+                            // Record the payment transaction details.
                             db.query(
-                                `INSERT INTO order_payment_detail (order_id, pay_id, transaction_id, 
-                                transaction_payload, payment_transaction_id, status) VALUES (?, ?, ?, ?, ?, ?)`,
-                                [order.order_id, paymentMethod.pay_id, transaction_id, reqObj.transaction_payload || '',
-                                    payment_transaction_id, payment_status], (err, paymentInsertResult) => {
-                                        if (err) return helper.throwHtmlError(err, res);
+                                `INSERT INTO order_payment_detail (order_id, pay_id, transaction_id, transaction_payload, payment_transaction_id, status)
+                                     VALUES (?, ?, ?, ?, ?, ?)`,
+                                [
+                                    order.order_id,
+                                    paymentMethod.pay_id,
+                                    transaction_id,
+                                    reqObj.transaction_payload || '',
+                                    payment_transaction_id,
+                                    newPaymentStatus
+                                ],
+                                (err, paymentInsertResult) => {
+                                    if (err) return helper.throwHtmlError(err, res);
 
-                                        // Update the order's payment status in the order_details table
-                                        db.query(
-                                            `UPDATE order_details SET payment_status = ?, updated_date = NOW() 
-                                            WHERE order_id = ? AND user_id = ?`,
-                                            [payment_status, order.order_id, userObj.user_id],
-                                            (err, updateResult) => {
-                                                if (err) return helper.throwHtmlError(err, res);
-
-                                                // Return the order and payment details so the user can see what they're paying for
-                                                return res.json({
-                                                    status: "1",
-                                                    message: "Payment processed successfully.",
-                                                    payload: {
-                                                        order_id: order.order_id,
-                                                        cart_id: order.cart_id,
-                                                        total_amount: order.total_price,
-                                                        payment_method: paymentMethod,
-                                                        transaction_id: transaction_id,
-                                                        payment_transaction_id: payment_transaction_id
-                                                    }
-                                                });
+                                    // Optionally, insert a notification for payment confirmation.
+                                    db.query(
+                                        `INSERT INTO notification_details (ref_id, user_id, title, message, notification_type)
+                                             VALUES (?, ?, ?, ?, ?)`,
+                                        [
+                                            order.order_id,
+                                            userObj.user_id,
+                                            "Payment Confirmation",
+                                            "Payment for order #" + order.order_id + " has been successfully processed.",
+                                            "2"
+                                        ],
+                                        (err, iResult) => {
+                                            if (err) {
+                                                helper.throwHtmlError(err, res);
+                                                return;
                                             }
-                                        );
-                                    }
+                                            helper.dlog("Notification added for payment confirmation");
+                                        }
+                                    );
+
+                                    // Update the order's payment status and set order_status to 2.
+                                    db.query(
+                                        `UPDATE order_details 
+                                             SET payment_status = ?, order_status = ?, updated_date = NOW() 
+                                             WHERE order_id = ? AND user_id = ?`,
+                                        [newPaymentStatus, 2, order.order_id, userObj.user_id],
+                                        (err, updateResult) => {
+                                            if (err) return helper.throwHtmlError(err, res);
+
+                                            // Soft delete active cart items for this user.
+                                            db.query(
+                                                `UPDATE carts SET status = 2, updated_date = NOW() WHERE user_id = ? AND status = 1`,
+                                                [userObj.user_id],
+                                                (err) => {
+                                                    if (err) return helper.throwHtmlError(err, res);
+
+                                                    // Now fetch the full order details with product aggregation.
+                                                    db.query(
+                                                        `SELECT 
+                                                                od.order_id, od.cart_id, od.user_id, od.address_id, od.total_price, od.user_price, od.discount_price, od.delivery_price,
+                                                                od.promo_code_id, od.payment_type, od.pay_id, od.payment_status, od.order_status, od.status, od.created_date,
+                                                                GROUP_CONCAT(DISTINCT ci.product_id SEPARATOR ', ') AS product_ids,
+                                                                GROUP_CONCAT(DISTINCT ci.quantity SEPARATOR ', ') AS quantities,
+                                                                GROUP_CONCAT(DISTINCT pd.product_name SEPARATOR ', ') AS product_names,
+                                                                GROUP_CONCAT(DISTINCT (CASE WHEN imd.image <> '' THEN CONCAT(?, imd.image) ELSE '' END) SEPARATOR ', ') AS images
+                                                             FROM order_details od
+                                                             JOIN cart_items ci ON od.cart_id = ci.cart_id
+                                                             JOIN product_details pd ON ci.product_id = pd.product_id AND pd.status = 1
+                                                             LEFT JOIN image_detail imd ON pd.product_id = imd.product_id AND imd.status = 1
+                                                             WHERE od.order_id = ? AND od.user_id = ?
+                                                             GROUP BY od.order_id`,
+                                                        [helper.ImagePath(), order.order_id, userObj.user_id],
+                                                        (err, fullOrderResults) => {
+                                                            if (err) return helper.throwHtmlError(err, res);
+                                                            if (fullOrderResults.length > 0) {
+                                                                const formattedOrder = formatOrder(fullOrderResults[0]);
+                                                                return res.json({
+                                                                    status: "1",
+                                                                    message: "Payment processed successfully.",
+                                                                    payload: formattedOrder
+                                                                });
+                                                            } else {
+                                                                return res.json({ status: "0", message: "Order not found." });
+                                                            }
+                                                        }
+                                                    );
+                                                }
+                                            );
+                                        }
+                                    );
+                                }
                             );
                         }
                     );
@@ -1728,37 +1901,46 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
 
     app.post('/api/app/my_orders', (req, res) => {
         helper.dlog(req.body);
-        var reqObj = req.body;
+        const reqObj = req.body;
 
         checkAccessToken(req.headers, res, (userObj) => {
             const userId = userObj.user_id || userObj.id;
             db.query(
                 `SELECT 
-                    od.order_id,od.cart_id,od.user_id, 
-                    od.address_id,od.total_price,od.user_price, 
-                    od.discount_price,od.delivery_price,od.promo_code_id, 
-                    od.payment_type,od.pay_id,od.payment_status, 
-                    od.order_status,od.status,od.created_date,
-                    GROUP_CONCAT(DISTINCT ci.product_id SEPARATOR ', ') AS product_ids,
-                    GROUP_CONCAT(DISTINCT ci.quantity SEPARATOR ', ') AS quantities,
-                    GROUP_CONCAT(DISTINCT pd.product_name SEPARATOR ', ') AS names,
-                    GROUP_CONCAT(DISTINCT (CASE WHEN imd.image <> '' THEN CONCAT(?, imd.image) ELSE '' END) SEPARATOR ', ') 
-                    AS images
-                 FROM order_details AS od 
-                 INNER JOIN cart_items AS ci ON od.cart_id = ci.cart_id
-                 INNER JOIN product_details AS pd ON ci.product_id = pd.product_id
-                 LEFT JOIN image_detail AS imd ON pd.product_id = imd.product_id AND imd.status = 1
-                 WHERE od.user_id = ?
-                 GROUP BY od.order_id`,[image_base_url, userId],(err, result) => {
+                        od.order_id,
+                        od.cart_id,
+                        od.user_id, 
+                        od.address_id,
+                        od.total_price,
+                        od.user_price, 
+                        od.discount_price,
+                        od.delivery_price,
+                        od.promo_code_id, 
+                        od.payment_type,
+                        od.pay_id,
+                        od.payment_status, 
+                        od.order_status,
+                        od.status,
+                        od.created_date,
+                        GROUP_CONCAT(DISTINCT ci.product_id SEPARATOR ', ') AS product_ids,
+                        GROUP_CONCAT(DISTINCT ci.quantity SEPARATOR ', ') AS quantities,
+                        GROUP_CONCAT(DISTINCT pd.product_name SEPARATOR ', ') AS product_names,
+                        GROUP_CONCAT(DISTINCT (CASE WHEN imd.image <> '' THEN CONCAT(?, imd.image) ELSE '' END) SEPARATOR ', ') AS images
+                     FROM order_details AS od 
+                     INNER JOIN cart_items AS ci ON od.cart_id = ci.cart_id
+                     INNER JOIN product_details AS pd ON ci.product_id = pd.product_id
+                     LEFT JOIN image_detail AS imd ON pd.product_id = imd.product_id AND imd.status = 1
+                     WHERE od.user_id = ? AND od.order_status IN (1, 2)
+                     GROUP BY od.order_id`,
+                [helper.ImagePath(), userId],
+                (err, result) => {
                     if (err) {
                         helper.throwHtmlError(err, res);
                         return;
                     }
-                    
-                        res.json({ status: "1", payload: result, message: messages.success });
-                      
-                        
-                    
+                    // Format each order row with formatOrder.
+                    const formattedOrders = result.map(row => formatOrder(row));
+                    res.json({ status: "1", payload: formattedOrders, message: messages.success });
                 }
             );
         }, "1");
@@ -1766,39 +1948,48 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
 
     app.post('/api/app/my_orders_details', (req, res) => {
         helper.dlog(req.body);
-        var reqObj = req.body;
-    
+        const reqObj = req.body;
+
         // Validate that "order_id" is provided in the request body.
         checkAccessToken(req.headers, res, (userObj) => {
             helper.checkParameterValid(res, reqObj, ["order_id"], () => {
                 const userId = userObj.user_id || userObj.id;
                 db.query(
                     `SELECT 
-                        od.order_id,od.cart_id,od.user_id,
-                        od.address_id,od.total_price,od.user_price,
-                        od.discount_price,od.delivery_price,od.promo_code_id,
-                        od.payment_type,od.pay_id,od.payment_status,
-                        od.order_status,od.status,od.created_date,
+                        od.order_id,
+                        od.cart_id,
+                        od.user_id,
+                        od.address_id,
+                        od.total_price,
+                        od.user_price,
+                        od.discount_price,
+                        od.delivery_price,
+                        od.promo_code_id,
+                        od.payment_type,
+                        od.pay_id,
+                        od.payment_status,
+                        od.order_status,
+                        od.status,
+                        od.created_date,
                         GROUP_CONCAT(DISTINCT ci.product_id SEPARATOR ', ') AS product_ids,
                         GROUP_CONCAT(DISTINCT ci.quantity SEPARATOR ', ') AS quantities,
                         GROUP_CONCAT(DISTINCT pd.product_name SEPARATOR ', ') AS product_names,
-                        GROUP_CONCAT(DISTINCT (CASE 
-                            WHEN imd.image <> '' THEN CONCAT(?, imd.image)
-                            ELSE '' END) SEPARATOR ', ') AS images
+                        GROUP_CONCAT(DISTINCT (CASE WHEN imd.image <> '' THEN CONCAT(?, imd.image) ELSE '' END) SEPARATOR ', ') AS images
                      FROM order_details od
                      JOIN cart_items ci ON od.cart_id = ci.cart_id
                      JOIN product_details pd ON ci.product_id = pd.product_id AND pd.status = 1
                      LEFT JOIN image_detail imd ON pd.product_id = imd.product_id AND imd.status = 1
-                     WHERE od.user_id = ? AND od.order_id = ?
+                     WHERE od.user_id = ? AND od.order_id = ? AND od.order_status IN (1, 2)
                      GROUP BY od.order_id`,
-                    [image_base_url, userId, reqObj.order_id],
+                    [helper.ImagePath(), userId, reqObj.order_id],
                     (err, result) => {
                         if (err) {
                             helper.throwHtmlError(err, res);
                             return;
                         }
                         if (result.length > 0) {
-                            res.json({ status: "1", payload: result[0], message: messages.success });
+                            const formattedOrder = formatOrder(result[0]);
+                            res.json({ status: "1", payload: formattedOrder, message: messages.success });
                         } else {
                             res.json({ status: "0", message: "Invalid order" });
                         }
@@ -1807,5 +1998,77 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
             });
         }, "1");
     });
+
+    app.post('/api/app/notification_list', (req, res) => {
+        helper.dlog(req.body)
+        var reqObj = req.body
+
+        checkAccessToken(req.headers, res, (userObj) => {
+
+            db.query(`SELECT
+                notification_id, ref_id, title, message, 
+                notification_type, it_read, status, created_date,
+                FROM notification_details WHERE user_id = ? AND status = 1`,
+                [userObj.user_id], (err, result) => {
+                    if (err) {
+                        helper.throwHtmlError(err, res);
+                        return;
+                    }
+                    res.json({ status: "1", payload: result, message: messages.success });
+                }
+            )
+        }, "1")
+    })
+
+    app.post('/api/app/notification_read', (req, res) => {
+        helper.dlog(req.body);
+        var reqObj = req.body;
     
+        checkAccessToken(req.headers, res, (userObj) => {
+            db.query(
+                `UPDATE notification_details 
+                 SET it_read = ?, updated_date = NOW() 
+                 WHERE notification_id = ? AND user_id = ?`,
+                [2, reqObj.notification_id, userObj.user_id],
+                (err, result) => {
+                    if (err) {
+                        helper.throwHtmlError(err, res);
+                        return;
+                    }
+    
+                    if (result.affectedRows > 0) {
+                        res.json({ success: true, message: "Notification read" });
+                    } else {
+                        res.json({ success: false, message: messages.fail });
+                    }
+                }
+            );
+        }, "1");
+    });
+    
+    app.post('/api/app/notification_read_all', (req, res) => {
+        helper.dlog(req.body)
+        var reqObj = req.body
+
+        checkAccessToken(req.headers, res, (userObj) => {
+
+            db.query(`UPDATE notification_details SET
+                 it_read = 2 AND updated_date = NOW(),
+                 WHERE user_id = ? AND status = 1`,
+                [userObj.user_id], (err, result) => {
+                    if (err) {
+                        helper.throwHtmlError(err, res);
+                        return;
+                    }
+                    if (result.affectedRows > 0) {
+                        res.json({ status: "1", message: messages.success });
+                    } else {
+                        res.json({ status: "0", payload: result, message: messages.fail });
+                    }
+                }
+            )
+        }, "1")
+    })
+
+
 }

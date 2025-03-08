@@ -108,8 +108,9 @@ function saveImage(imageFile, savePath) {
 
 // //END-POINT
 module.exports.controllers = (app, io, user_socket_connect_list) => {
+     const image_base_url = helper.ImagePath();
     // Brand  end point
-    app.post('/api/admin/brand_add', (req, res) => {
+    app.post('/api/admin/brand_add', (req, res) => { 
         helper.dlog(req.body);
         const reqObj = req.body;
 
@@ -1295,10 +1296,8 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
                             } else {
                                 res.json({ status: "0", message: messages.fail });
                             }
-
                         }
                     );
-
                 });
         }, "1");
     });
@@ -1432,9 +1431,9 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
         var reqObj = req.body
 
         checkAccessToken(req.headers, res, (userObj) => {
-            helper.checkParameterValid(res, reqObj, ["promo_code_id", "offer_price", 
-                "start_date", "end_date","title", "description", "type",
-                 "minimum_order_amount", "maximum_discount_amount"], () => {     
+            helper.checkParameterValid(res, reqObj, ["promo_code_id", "offer_price",
+                "start_date", "end_date", "title", "description", "type",
+                "minimum_order_amount", "maximum_discount_amount"], () => {
                     db.query(
                         `UPDATE promo_codes 
                          SET offer_price = ?, start_date = ?, end_date = ?, 
@@ -1442,17 +1441,17 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
                              minimum_order_amount = ?,maximum_discount_amount = ?, 
                              updated_date = NOW() WHERE promo_code_id = ? AND status = ?`,
                         [
-                          reqObj.offer_price,reqObj.start_date,reqObj.end_date,
-                          reqObj.title,reqObj.description,reqObj.type,
-                          reqObj.minimum_order_amount,reqObj.maximum_discount_amount,
-                          reqObj.promo_code_id,  
-                          1                      
+                            reqObj.offer_price, reqObj.start_date, reqObj.end_date,
+                            reqObj.title, reqObj.description, reqObj.type,
+                            reqObj.minimum_order_amount, reqObj.maximum_discount_amount,
+                            reqObj.promo_code_id,
+                            1
                         ], (err, result) => {
                             if (err) {
                                 helper.throwHtmlError(err, res);
                                 return;
                             }
-                            
+
                             if (result.affectedRows > 0) {
                                 res.json({ status: "1", message: messages.updatePromo });
                             } else {
@@ -1474,7 +1473,7 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
 
                 db.query(`UPDATE promo_codes SET status = ?, updated_date = NOW()
                          WHERE promo_code_id = ? AND status = ?`,
-                    ["2",reqObj.promo_code_id, "1"], (err, result) => {
+                    ["2", reqObj.promo_code_id, "1"], (err, result) => {
                         if (err) {
                             helper.throwHtmlError(err, res);
                             return;
@@ -1482,7 +1481,7 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
                         if (result.affectedRows > 0) {
                             res.json({ status: "1", message: messages.deletePromo });
                         } else {
-                            res.json({ status: "0", message: messages.promoCodeNotFound});
+                            res.json({ status: "0", message: messages.promoCodeNotFound });
                         }
                     }
                 )
@@ -1500,8 +1499,8 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
                          end_date, title, description, type, minimum_order_amount, 
                          maximum_discount_amount, created_date, updated_date
                          FROM promo_codes WHERE end_date >= NOW() 
-                         AND status = 1 ORDER BY start_date DESC `,[], 
-                         (err, result) => {
+                         AND status = 1 ORDER BY start_date DESC `, [],
+                (err, result) => {
                     if (err) {
                         helper.throwHtmlError(err, res);
                         return;
@@ -1510,6 +1509,221 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
                 })
         }, "1")
     })
+
+    app.post('/api/admin/new_order_list', (req, res) => {
+        helper.dlog(req.body);
+        var reqObj = req.body;
+
+        checkAccessToken(req.headers, res, (userObj) => {
+            const userId = userObj.user_id || userObj.id;
+            db.query(
+                `SELECT 
+                    od.order_id,od.cart_id,od.user_id, 
+                    od.address_id,od.total_price,od.user_price, 
+                    od.discount_price,od.delivery_price,od.promo_code_id, 
+                    od.payment_type,od.pay_id,od.payment_status, 
+                    od.order_status,od.status,od.created_date,
+                    GROUP_CONCAT(DISTINCT ci.product_id SEPARATOR ', ') AS product_ids,
+                    GROUP_CONCAT(DISTINCT ci.quantity SEPARATOR ', ') AS quantities,
+                    GROUP_CONCAT(DISTINCT pd.product_name SEPARATOR ', ') AS names,
+                    GROUP_CONCAT(DISTINCT (CASE WHEN imd.image <> '' THEN CONCAT(?, imd.image) ELSE '' END) SEPARATOR ', ') 
+                    AS images
+                 FROM order_details AS od 
+                 INNER JOIN cart_items AS ci ON od.cart_id = ci.cart_id
+                 INNER JOIN product_details AS pd ON ci.product_id = pd.product_id
+                 LEFT JOIN image_detail AS imd ON pd.product_id = imd.product_id AND imd.status = 1
+                 WHERE (od.payment_type = 1 OR (od.payment_type = 2 AND od.payment_status = 2))
+                 AND order_status = 1
+                 GROUP BY od.order_id ORDER BY od.order_id`, [image_base_url], (err, result) => {
+                if (err) {
+                    helper.throwHtmlError(err, res);
+                    return;
+                }
+                res.json({ status: "1", payload: result, message: messages.success });
+            }
+            );
+        }, "1");
+    });
+
+    app.post('/api/admin/completed_order_list', (req, res) => {
+        helper.dlog(req.body);
+        var reqObj = req.body;
+
+        checkAccessToken(req.headers, res, (userObj) => {
+            const userId = userObj.user_id || userObj.id;
+            db.query(
+                `SELECT 
+                    od.order_id,od.cart_id,od.user_id, 
+                    od.address_id,od.total_price,od.user_price, 
+                    od.discount_price,od.delivery_price,od.promo_code_id, 
+                    od.payment_type,od.pay_id,od.payment_status, 
+                    od.order_status,od.status,od.created_date,
+                    GROUP_CONCAT(DISTINCT ci.product_id SEPARATOR ', ') AS product_ids,
+                    GROUP_CONCAT(DISTINCT ci.quantity SEPARATOR ', ') AS quantities,
+                    GROUP_CONCAT(DISTINCT pd.product_name SEPARATOR ', ') AS names,
+                    GROUP_CONCAT(DISTINCT (CASE WHEN imd.image <> '' THEN CONCAT(?, imd.image) ELSE '' END) SEPARATOR ', ') 
+                    AS images
+                 FROM order_details AS od 
+                 INNER JOIN cart_items AS ci ON od.cart_id = ci.cart_id
+                 INNER JOIN product_details AS pd ON ci.product_id = pd.product_id
+                 LEFT JOIN image_detail AS imd ON pd.product_id = imd.product_id AND imd.status = 1
+                 WHERE (od.payment_type = 1 OR (od.payment_type = 2 AND od.payment_status = 2)) AND order_status = 2
+                 GROUP BY od.order_id ORDER BY od.order_id`, [image_base_url], (err, result) => {
+                if (err) {
+                    helper.throwHtmlError(err, res);
+                    return;
+                }
+                res.json({ status: "1", payload: result, message: messages.success });
+            }
+            );
+        }, "1");
+    });
+
+    app.post('/api/admin/cancel_decline_order_list', (req, res) => {
+        helper.dlog(req.body);
+        var reqObj = req.body;
+
+        checkAccessToken(req.headers, res, (userObj) => {
+            const userId = userObj.user_id || userObj.id;
+            db.query(
+                `SELECT 
+                    od.order_id,od.cart_id,od.user_id, 
+                    od.address_id,od.total_price,od.user_price, 
+                    od.discount_price,od.delivery_price,od.promo_code_id, 
+                    od.payment_type,od.pay_id,od.payment_status, 
+                    od.order_status,od.status,od.created_date,
+                    GROUP_CONCAT(DISTINCT ci.product_id SEPARATOR ', ') AS product_ids,
+                    GROUP_CONCAT(DISTINCT ci.quantity SEPARATOR ', ') AS quantities,
+                    GROUP_CONCAT(DISTINCT pd.product_name SEPARATOR ', ') AS names,
+                    GROUP_CONCAT(DISTINCT (CASE WHEN imd.image <> '' THEN CONCAT(?, imd.image) ELSE '' END) SEPARATOR ', ') 
+                    AS images
+                 FROM order_details AS od 
+                 INNER JOIN cart_items AS ci ON od.cart_id = ci.cart_id
+                 INNER JOIN product_details AS pd ON ci.product_id = pd.product_id
+                 LEFT JOIN image_detail AS imd ON pd.product_id = imd.product_id AND imd.status = 1
+                 WHERE (od.payment_type = 1 OR (od.payment_type = 2 AND od.payment_status = 2)) AND order_status = 0
+                 GROUP BY od.order_id ORDER BY od.order_id`, [image_base_url], (err, result) => {
+                if (err) {
+                    helper.throwHtmlError(err, res);
+                    return;
+                }
+                res.json({ status: "1", payload: result, message: messages.success });
+            }
+            );
+        }, "1");
+    });
+
+    app.post('/api/app/orders_details', (req, res) => {
+        helper.dlog(req.body);
+        var reqObj = req.body;
+    
+        // Validate that "order_id" and "user_id" are provided in the request body.
+        checkAccessToken(req.headers, res, (userObj) => {
+            helper.checkParameterValid(res, reqObj, ["order_id", "user_id"], () => {
+                const userId = userObj.user_id || userObj.id;
+                db.query(
+                    `SELECT 
+                        od.order_id,od.cart_id,od.user_id,
+                        od.address_id,od.total_price,od.user_price,
+                        od.discount_price,od.delivery_price,od.promo_code_id,
+                        od.payment_type,od.pay_id,od.payment_status,
+                        od.order_status,od.status,od.created_date,
+                        GROUP_CONCAT(DISTINCT ci.product_id SEPARATOR ', ') AS product_ids,
+                        GROUP_CONCAT(DISTINCT ci.quantity SEPARATOR ', ') AS quantities,
+                        GROUP_CONCAT(DISTINCT pd.product_name SEPARATOR ', ') AS product_names,
+                        GROUP_CONCAT(DISTINCT (CASE 
+                            WHEN imd.image <> '' THEN CONCAT(?, imd.image)
+                            ELSE '' END) SEPARATOR ', ') AS images
+                     FROM order_details od
+                     JOIN cart_items ci ON od.cart_id = ci.cart_id
+                     JOIN product_details pd ON ci.product_id = pd.product_id AND pd.status = 1
+                     LEFT JOIN image_detail imd ON pd.product_id = imd.product_id AND imd.status = 1
+                     WHERE od.order_id = ? AND od.user_id = ?
+                     GROUP BY od.order_id`,
+                    [helper.ImagePath(), reqObj.order_id, userId],
+                    (err, result) => {
+                        if (err) {
+                            helper.throwHtmlError(err, res);
+                            return;
+                        }
+                        if (result.length > 0) {
+                            res.json({ status: "1", payload: result[0], message: messages.success });
+                        } else {
+                            res.json({ status: "0", message: "Invalid order" });
+                        }
+                    }
+                );
+            });
+        }, "1");
+    });
+    
+    app.post('/api/admin/change_order_status', (req, res) => {
+        helper.dlog(req.body);
+        var reqObj = req.body;
+    
+        checkAccessToken(req.headers, res, (userObj) => {
+            helper.checkParameterValid(res, reqObj, ["order_id", "user_id", "order_status"], () => {
+    
+                // Only update the order if its current status is lower than the new order_status
+                db.query(`
+                   UPDATE order_details 
+                   SET order_status = ?, updated_date = NOW()
+                   WHERE order_id = ? AND user_id = ? AND order_status < ?`, 
+                    [reqObj.order_status, reqObj.order_id, reqObj.user_id, reqObj.order_status], 
+                    (err, result) => {
+                        if (err) {
+                            helper.throwHtmlError(err, res);
+                            return;
+                        }
+                        if (result.affectedRows > 0) {
+                            var title = "";
+                            var message = "";
+                            var notified_type = 1;
+    
+                            // Determine notification title and message based on the new order_status.
+                            switch (reqObj.order_status) {
+                                case "2":
+                                    title = "Order Accepted";
+                                    message = "Your order " + reqObj.order_id + " has been accepted.";
+                                    break;
+                                case "3":
+                                    title = "Order Delivered";
+                                    message = "Your order " + reqObj.order_id + " has been delivered.";
+                                    break;
+                                case "4":
+                                    title = "Order Cancelled";
+                                    message = "Your order " + reqObj.order_id + " has been cancelled.";
+                                    break;
+                                case "5":
+                                    title = "Order Declined";
+                                    message = "Your order " + reqObj.order_id + " has been declined.";
+                                    break;
+                                default:
+                                    break;
+                            }
+    
+                            // Insert notification for the user.
+                            db.query(`
+                                INSERT INTO notification_details (ref_id, user_id, title, message, notification_type)
+                                VALUES (?, ?, ?, ?, ?)`, 
+                                [reqObj.order_id, reqObj.user_id, title, message, notified_type], 
+                                (err, iResult) => {
+                                    if (err) {                                    
+                                        helper.throwHtmlError(err, res);
+                                        return;
+                                    }
+                                    helper.dlog("Notification added");
+                                }
+                            );
+                            res.json({ status: "1", message: "Order status updated successfully" });
+                        } else {
+                            res.json({ status: "0", message: messages.fail });
+                        }
+                    }
+                );
+            });
+        }, "1");
+    });
 
 
     // app.post('/api/admin/about_update', (req, res) => {
@@ -2721,6 +2935,3 @@ module.exports.controllers = (app, io, user_socket_connect_list) => {
     //         }, "1");
     //     });
 }
-
-
-
